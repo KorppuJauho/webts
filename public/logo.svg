@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>WebTS</title>
+  <rect width="512" height="512" rx="112" fill="#1e1f22"/>
+  <path d="M256 104c-88 0-152 66-152 150v66c0 22 18 40 40 40h24c13 0 24-11 24-24v-76c0-13-11-24-24-24h-26c6-54 54-92 114-92s108 38 114 92h-26c-13 0-24 11-24 24v76c0 13 11 24 24 24h24c22 0 40-18 40-40v-66c0-84-64-150-152-150z" fill="#38bdf8"/>
+  <path d="M352 360c0 30-30 48-70 48h-14" fill="none" stroke="#38bdf8" stroke-width="20" stroke-linecap="round"/>
+  <circle cx="252" cy="408" r="22" fill="#38bdf8"/>
+</svg>

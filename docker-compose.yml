@@ -1,0 +1,26 @@
+# WebTS with Docker Compose. Copy .env.example to .env, fill it in, then: docker compose up -d --build
+# Put it behind a sign-in (README: "Access"); never publish it to the internet without one unless you mean to.
+services:
+  webts:
+    build: .
+    image: webts:local
+    container_name: webts
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:3002:3002"   # only this computer; your reverse proxy or tunnel reaches it here
+    volumes:
+      - ./data:/app/data          # TeamSpeak identities and saved settings: keep and back up
+      - ./sounds:/app/sounds:ro   # optional: TeamSpeak's UI sounds (README: "Sounds")
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

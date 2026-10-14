@@ -1,0 +1,12 @@
+node_modules
+data
+sounds
+.env
+.env.*
+.git
+.github
+test
+/*.md
+docker-compose.yml
+Dockerfile
+.dockerignore

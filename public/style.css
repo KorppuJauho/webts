@@ -1,0 +1,155 @@
+/* WebTS base styles: the channel tree and page basics. index.html adds the rest. */
+
+html, body {
+    max-width: 100%;
+    overflow-x: hidden; /* Instantly kills any accidental horizontal scrolling */
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #2d2d2e;
+    color: #334155;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+h2 {
+    margin-bottom: 1.5rem;
+    color: #d4d5d6;
+}
+
+/* --- THE TEAMSPEAK WIDGET --- */
+.ts-widget {
+    background-color: #2b2d31; 
+    border-radius: 12px;
+    width: 340px;
+    color: #dbdee1;
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.ts-header {
+    background-color: #1e1f22;
+    padding: 16px;
+    display: flex;
+    align-items: center;
+    font-weight: 600;
+    font-size: 15px;
+    border-bottom: 1px solid #111214;
+    cursor: help;
+    border-radius: 12px 12px 0 0;
+}
+
+.ts-header svg {
+    margin-right: 10px;
+    color: #00a8fc;
+}
+
+.ts-content {
+    padding: 12px;
+}
+
+.ts-loading {
+    text-align: center;
+    padding: 20px;
+    color: #80848e;
+}
+
+.ts-channel-group {
+    background-color: #1e1f22;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.02);
+}
+
+.ts-channel-title {
+    padding: 10px 12px;
+    font-weight: 600;
+    font-size: 14px;
+    color: #f2f3f5;
+    display: flex;
+    align-items: center;
+    background-color: #1e1f22;
+    border-radius: 8px 8px 0 0;
+}
+
+.ts-channel-icon {
+    width: 18px;
+    height: 18px;
+    margin-right: 8px;
+    opacity: 0.7;
+}
+
+/* Adjusted to slide the name to the left since the avatar is gone */
+.ts-user {
+    position: relative;
+    display: flex;
+    align-items: center;
+    padding: 8px 12px 8px 16px; 
+    transition: background 0.2s;
+    border-top: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+/* Keeps the bottom of the channel boxes perfectly rounded */
+.ts-user:last-child {
+    border-radius: 0 0 8px 8px;
+}
+
+.ts-user:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Forces your uploaded channel icons to perfectly match TS sizes */
+.ts-custom-channel-icon {
+    width: 16px;
+    height: 16px;
+    margin-right: 8px;
+    border-radius: 2px;
+    object-fit: contain;
+}
+
+.ts-username {
+    font-size: 14px;
+    color: #00a8fc; 
+    font-weight: 500;
+}
+
+/* User Badges (Mic Muted, Deafened, AFK) */
+.ts-badges {
+    margin-left: auto; /* Pushes the icons all the way to the right */
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ts-icon-muted {
+    width: 16px;
+    height: 16px;
+    color: #da373c; /* Discord/TS Red for Muted */
+}
+
+.ts-afk-tag {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #dbdee1;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.modal-content {
+    margin: auto;
+    display: block;
+    max-width: 90%;
+    max-height: 90%;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%); /* Perfectly centered */
+    border-radius: 8px;
+    border: 2px solid rgba(255, 255, 255, 0.1);
+}

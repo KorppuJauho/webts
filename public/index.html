@@ -1,0 +1,1373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebTS</title>
+    <link rel="icon" type="image/svg+xml" href="logo.svg">
+    <!-- The installable app (phones): its own window and icon. use-credentials: the sign-in cookie goes along. -->
+    <link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
+    <meta name="theme-color" content="#1e1f22">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="WebTS">
+    <link rel="stylesheet" href="style.css">
+    <!-- Socket.IO client 4.7.5 (MIT), the official package's dist/socket.io.min.js, byte-identical to cdn.socket.io's. -->
+    <script src="vendor/socket.io-4.7.5.min.js"></script>
+    <style>
+        /* Override style.css backgrounds and layout for clean client view */
+        body {
+            background-image: none !important;
+            background-color: #121212 !important; 
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden; /* Prevent full page scroll; chat scrolls independently */
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+        }
+
+        /* Header bar and exit button */
+        .app-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 24px;
+            background-color: #1a1b1e;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            z-index: 10;
+        }
+        .exit-btn {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.2s ease;
+        }
+        .exit-btn:hover {
+            background: rgba(239, 68, 68, 0.3);
+            border-color: #ef4444;
+        }
+
+        /* Main layout (Channels left, Chat right) */
+        .main-container {
+            display: flex;
+            flex: 1;
+            padding: 20px;
+            gap: 40px;
+            max-width: 1400px;
+            margin: 0 auto;
+            width: 100%;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+
+        /* Left panel (Controls + Channel tree) */
+        .left-panel {
+            width: 320px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            flex-shrink: 0;
+        }
+
+        /* Audio/Mic buttons */
+        .controls-bar {
+            background-color: #1e1f22;
+            border-radius: 12px;
+            padding: 12px;
+            display: flex;
+            justify-content: space-around;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .control-btn {
+            background: #2b2d31;
+            border: 1px solid rgba(255,255,255,0.1);
+            color: #dbdee1;
+            border-radius: 50%;
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .control-btn:hover { background: #383a40; color: white; }
+        .control-btn.muted { 
+            background: #da373c; 
+            border-color: #da373c; 
+            color: white; 
+        }
+
+        /* TS Widget customization in Client view */
+        .ts-widget {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden; /* Keep channel tree inside box */
+            width: auto; /* style.css gives the front page's box a fixed 340px; here it fills the column */
+        }
+        /* style.css's "?" cursor belongs to the front page's server tooltip; there is none here */
+        .ts-widget .ts-header { cursor: default; }
+        .ts-content {
+            flex: 1;
+            overflow-y: auto; /* Only channel list scrolls */
+            padding-right: 5px;
+        }
+        .ts-channel-title {
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+        .ts-channel-title:hover {
+            background-color: rgba(255,255,255,0.05);
+        }
+        /* Spacers and banners, as the TeamSpeak app draws them */
+        .ts-channel-title.ts-spacer {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #cbd5e1;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            min-height: 1.4em;
+        }
+        .ts-spacer-left { justify-content: flex-start; }
+        .ts-spacer-center { justify-content: center; text-align: center; }
+        .ts-spacer-right { justify-content: flex-end; text-align: right; }
+        .ts-spacer-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ts-spacer-repeat { flex: 1; text-overflow: clip; color: #94a3b8; }
+        .ts-spacer-line { flex: 1; border-top: 2px solid rgba(148, 163, 184, 0.45); }
+        .ts-spacer-line-dashed { border-top-style: dashed; }
+        .ts-spacer-line-dotted { border-top-style: dotted; }
+        .ts-channel-title.ts-has-banner {
+            position: relative;
+            overflow: hidden;
+            isolation: isolate;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+        }
+        .ts-banner-img {
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            max-width: 500px;
+            height: auto;
+            z-index: -1;
+            pointer-events: none;
+            -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent 100%);
+            mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent 100%);
+        }
+        .ts-banner-shade {
+            position: absolute;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background: linear-gradient(to right, rgba(30, 31, 34, 0.9) 0, rgba(30, 31, 34, 0.55) 110px, transparent 220px);
+        }
+        .ts-banner-shade.centered { background: linear-gradient(to right, transparent 0, rgba(30, 31, 34, 0.75) 40% 60%, transparent 100%); }
+        .ts-banner-shade.right { background: linear-gradient(to left, rgba(30, 31, 34, 0.9) 0, rgba(30, 31, 34, 0.55) 110px, transparent 220px); }
+
+        .ts-channel-group {
+            margin-bottom: 0.5rem;
+            /* The title has its own background with only its top corners rounded (style.css); an empty channel
+               showed square bottom corners. The box now clips its contents to its own rounded corners. */
+            overflow: hidden;
+        }
+
+        .ts-custom-channel-icon {
+            width: 18px;
+            height: 18px;
+            object-fit: contain;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+
+        /* The server's own icons */
+        .ts-group-icon {
+            width: 16px;
+            height: 16px;
+            flex: none;
+            object-fit: contain;
+        }
+        .server-name-icon {
+            width: 18px;
+            height: 18px;
+            object-fit: contain;
+            vertical-align: -3px;
+            margin-right: 6px;
+        }
+        .chat-avatar {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            object-fit: cover;
+            vertical-align: -5px;
+            margin-right: 6px;
+        }
+        .person-menu-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            object-fit: cover;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+
+        .ts-channel-icon {
+            width: 18px;
+            height: 18px;
+            vertical-align: middle;
+            margin-right: 4px;
+            color: #3b82f6;
+        }
+
+        .ts-user {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 4px 8px;
+            margin: 2px 0;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.03);
+            font-size: 0.85rem;
+        }
+
+        .ts-user-afk {
+            opacity: 0.6;
+        }
+
+        .ts-username {
+            font-weight: 500;
+            color: #cbd5e1;
+        }
+
+        .ts-badges {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .ts-afk-tag {
+            font-size: 0.65rem;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-weight: bold;
+            background: rgba(234, 179, 8, 0.2);
+            color: #fde047;
+            border: 1px solid rgba(234, 179, 8, 0.3);
+        }
+
+        .ts-icon-muted {
+            width: 14px;
+            height: 14px;
+            color: #ef4444;
+        }
+
+        .ts-icon-notalk {
+            width: 15px;
+            height: 15px;
+            color: #f59e0b;
+        }
+
+        .ts-icon-streaming {
+            width: 14px;
+            height: 14px;
+            color: #22c55e;
+        }
+
+        .ts-user-list {
+            padding-left: 1.2rem;
+        }
+
+        /* Right panel (Chat) */
+        .chat-panel {
+            flex: 1;
+            background-color: #2b2d31;
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            overflow: hidden;
+        }
+        .chat-header {
+            padding: 12px 16px;
+            background-color: #1e1f22;
+            border-bottom: 1px solid #111214;
+            font-weight: 600;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            overflow-x: auto;
+        }
+        /* Chat tabs: the channel + private conversations */
+        .chat-tab {
+            background: none; border: none; color: #94a3b8; font-weight: 600; font-size: 0.95rem;
+            padding: 4px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .chat-tab:hover { color: #f8fafc; }
+        .chat-tab.active { color: #f8fafc; background: rgba(255, 255, 255, 0.07); }
+        .chat-tab .tab-prefix { color: #80848e; }
+        .chat-tab .unread-dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; }
+        .chat-tab .tab-close { color: #80848e; padding: 0 2px; font-size: 1.05rem; line-height: 1; }
+        .chat-tab .tab-close:hover { color: #f8fafc; }
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            color: #dbdee1;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .chat-msg {
+            background: rgba(255, 255, 255, 0.02);
+            padding: 6px 10px;
+            border-radius: 6px;
+            border-left: 2px solid #3b82f6;
+        }
+
+        .chat-msg .time {
+            color: #64748b;
+            font-size: 0.75rem;
+            margin-right: 0.4rem;
+        }
+
+        .chat-msg .sender {
+            font-weight: bold;
+            color: #93c5fd;
+            margin-right: 0.4rem;
+        }
+        .chat-input-area {
+            padding: 16px;
+            background-color: #2b2d31;
+            border-top: 1px solid rgba(255,255,255,0.02);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        /* Pictures in the chat */
+        .chat-picture-btn {
+            flex: none;
+            width: 46px;
+            height: 46px;
+            border-radius: 8px;
+            border: none;
+            background-color: #383a40;
+            color: #b5bac1;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .chat-picture-btn:hover:not(:disabled) { color: #f2f3f5; background-color: #404249; }
+        .chat-picture-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        /* On a phone the button offers the camera too (Android's photo picker has none) */
+        .chat-input-area { position: relative; }
+        .chat-picture-menu {
+            position: absolute;
+            left: 16px;
+            bottom: calc(100% - 8px);
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            min-width: 190px;
+            padding: 6px;
+            border-radius: 8px;
+            background-color: #111214;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        }
+        .chat-picture-menu[hidden] { display: none; }
+        .chat-picture-menu button {
+            padding: 12px 14px;
+            border: none;
+            border-radius: 6px;
+            background: none;
+            color: #dbdee1;
+            font-size: 0.95rem;
+            text-align: left;
+            cursor: pointer;
+        }
+        .chat-picture-menu button:hover, .chat-picture-menu button:focus-visible { background-color: #404249; }
+        .chat-picture-pending {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 16px 0;
+            background-color: #2b2d31;
+        }
+        .chat-picture-pending[hidden] { display: none; }
+        .chat-picture-pending img {
+            width: 56px;
+            height: 56px;
+            object-fit: cover;
+            border-radius: 6px;
+            border: 1px solid #374151;
+        }
+        .chat-picture-pending-text {
+            flex: 1;
+            min-width: 0;
+            color: #b5bac1;
+            font-size: 0.85rem;
+        }
+        .chat-picture-pending-send {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            background-color: #3b82f6;
+            color: #fff;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .chat-picture-pending-send:hover { background-color: #2563eb; }
+        .chat-picture-pending-remove {
+            width: 36px;
+            height: 36px;
+            border: none;
+            border-radius: 6px;
+            background: none;
+            color: #b5bac1;
+            font-size: 1.1rem;
+            cursor: pointer;
+        }
+        .chat-picture-pending-remove:hover { background-color: #404249; color: #f2f3f5; }
+        .chat-picture-status {
+            padding: 8px 16px 0;
+            background-color: #2b2d31;
+            color: #b5bac1;
+            font-size: 0.85rem;
+        }
+        .chat-picture-status.error { color: #f87171; }
+        .chat-picture-status[hidden] { display: none; }
+        .chat-picture.failed a { display: none; }
+        .chat-picture.failed::after {
+            content: "🖼️ Picture not available";
+            color: #80848e;
+            font-style: italic;
+            font-size: 0.85rem;
+        }
+        .chat-input {
+            width: 100%;
+            padding: 14px 16px;
+            border-radius: 8px;
+            border: none;
+            background-color: #383a40;
+            color: white;
+            box-sizing: border-box;
+            outline: none;
+            font-size: 0.95rem;
+        }
+        .chat-input:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .ts-loading {
+            text-align: center;
+            padding: 2rem;
+            color: #94a3b8;
+        }
+
+        /* Connection banner */
+        .connection-banner {
+            background-color: #da373c; /* Red warning color */
+            color: white;
+            text-align: center;
+            padding: 8px 16px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+            z-index: 9;
+            /* Visible by default until WebSocket says otherwise */
+            display: block; 
+        }
+        
+        .connection-banner.success {
+            background-color: #23a559; /* Green success color (hidden soon) */
+        }
+        .connection-banner.info { background-color: #3b82f6; }
+        .banner-close {
+            margin-left: 12px; background: none; border: none; color: white; cursor: pointer;
+            font-size: 1.15rem; line-height: 1; padding: 0 4px; opacity: 0.85;
+        }
+        .banner-close:hover { opacity: 1; }
+        .banner-btn {
+            margin-left: 12px; padding: 3px 12px; border-radius: 6px; cursor: pointer;
+            background: white; color: #da373c; border: none; font-weight: 700;
+        }
+
+        /* A note about this browser (Firefox): stays until closed */
+        .browser-notice {
+            position: relative;
+            background: rgba(245, 158, 11, 0.14);
+            border-bottom: 1px solid rgba(245, 158, 11, 0.35);
+            color: #fde68a;
+            text-align: center;
+            padding: 8px 44px 8px 16px;
+            font-size: 0.9rem;
+        }
+        .browser-notice.hidden { display: none; }
+        .browser-notice .banner-close { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: #fde68a; margin: 0; }
+
+        /* Mobile layout */
+        @media (max-width: 768px) {
+            body { overflow: auto; } /* Allow full page scroll on mobile */
+            .main-container {
+                flex-direction: column;
+                padding: 15px;
+                overflow: visible;
+            }
+            .left-panel { width: 100%; }
+            .ts-widget { min-height: 350px; }
+            .chat-panel { min-height: 400px; margin-bottom: 20px; }
+        }
+
+        /* Server info: the server's name opens it */
+        .server-name-btn {
+            background: none; border: none; padding: 0; margin: 0;
+            color: inherit; font: inherit; font-weight: 600; cursor: pointer; text-align: left;
+        }
+        .server-name-btn:hover { text-decoration: underline; }
+        .server-info-content { width: 640px; max-height: 90vh; }
+        .server-info-content .modal-body { overflow-y: auto; gap: 12px; }
+        .server-banner { display: block; width: 100%; max-height: 280px; object-fit: cover; border-radius: 10px; }
+        .server-welcome, .server-stat, .server-website { background: #1e1f22; border-radius: 10px; padding: 10px 14px; }
+        .server-welcome { overflow-wrap: anywhere; white-space: pre-wrap; }
+        .server-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+        .server-stat span { display: block; color: #80848e; font-size: 0.8rem; }
+        .server-website { display: block; color: #dbdee1; text-decoration: none; }
+        .server-website:hover strong { text-decoration: underline; }
+        .server-website span { display: block; color: #80848e; font-size: 0.85rem; overflow-wrap: anywhere; }
+        .server-version { text-align: center; color: #80848e; font-size: 0.8rem; }
+
+        /* Settings Modal Styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: none; /* Hidden by default */
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            backdrop-filter: blur(4px);
+        }
+        .modal-overlay.active { display: flex; }
+        
+        .modal-content {
+            background-color: #2b2d31;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            width: 400px;
+            max-width: 90%;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            color: #dbdee1;
+        }
+        .modal-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #1e1f22;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-header h3 { margin: 0; font-size: 1.1rem; color: #f8fafc; }
+        .close-btn { background: none; border: none; color: #94a3b8; font-size: 1.5rem; cursor: pointer; }
+        .close-btn:hover { color: white; }
+        
+        .modal-body { padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+        
+        .settings-group label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #cbd5e1;
+        }
+        .val-badge { color: #3b82f6; font-weight: bold; }
+        .setting-desc { font-size: 0.75rem; color: #80848e; margin: 4px 0 0 0; }
+        
+        /* Nickname Input Group */
+        .input-prefix-group {
+            display: flex;
+            background-color: #1e1f22;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .input-prefix-group .prefix {
+            padding: 10px 12px;
+            background-color: #111214;
+            color: #94a3b8;
+            font-weight: 600;
+            font-size: 0.95rem;
+            border-right: 1px solid rgba(255,255,255,0.05);
+        }
+        .input-prefix-group input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: white;
+            padding: 10px;
+            font-size: 0.95rem;
+            outline: none;
+        }
+        
+        /* Custom Range Slider */
+        input[type=range] {
+            -webkit-appearance: none; /* For WebKit browsers */
+            appearance: none;         /* Standard property for compatibility */
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+            margin-top: -6px;
+        }
+        /* A more visible slider track */
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #475569 !important; /* Vaaleampi harmaa */
+            border-radius: 2px;
+        }
+        /* Firefox draws sliders with its own parts: without these the track was invisible and the knob a
+           large white circle. Separate rules, since a browser drops a rule with a part it
+           doesn't know. */
+        input[type=range]::-moz-range-thumb {
+            height: 16px;
+            width: 16px;
+            border: none;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+        }
+        input[type=range]::-moz-range-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #475569;
+            border-radius: 2px;
+        }
+
+        /* The level meter under the threshold slider */
+        .audio-meter-bg {
+            height: 6px;
+            background: #111214;
+            border-radius: 3px;
+            margin-top: 12px;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .audio-meter-fill {
+            height: 100%;
+            background: #22c55e;
+            width: 0%;
+            transition: width 0.05s ease-out, background-color 0.1s ease;
+        }
+        .audio-meter-threshold {
+            position: absolute;
+            top: 0; bottom: 0;
+            width: 2px;
+            background: #ef4444;
+            z-index: 2;
+        }
+
+        /* Puhumis-indikaattori (Vaaleansininen hehku) */
+        .ts-user.is-talking {
+            background: rgba(56, 189, 248, 0.1);
+            border-left: 2px solid #38bdf8;
+            padding-left: 6px; /* Keeps the text from jumping */
+        }
+        .ts-user.is-talking .ts-username {
+            color: #38bdf8;
+            text-shadow: 0 0 8px rgba(56, 189, 248, 0.6);
+        }
+
+        /* The settings window's tabs and fields */
+        .settings-content { width: 480px; max-height: 90vh; }
+        .settings-content .modal-body { overflow-y: auto; }
+        .settings-tabs { display: flex; gap: 4px; padding: 10px 20px 0; border-bottom: 1px solid #1e1f22; }
+        .settings-tab {
+            background: none; border: none; color: #94a3b8; padding: 8px 12px; cursor: pointer;
+            font-weight: 600; font-size: 0.9rem; border-bottom: 2px solid transparent;
+        }
+        .settings-tab:hover { color: #f8fafc; }
+        .settings-tab.active { color: #f8fafc; border-bottom-color: #3b82f6; }
+        .settings-page { display: flex; flex-direction: column; gap: 20px; }
+        .settings-page.hidden, .settings-group.hidden, .settings-group label.hidden, #vad-group.hidden, .setting-desc.hidden { display: none; }
+        #vad-group { display: flex; flex-direction: column; gap: 20px; }
+        .settings-select {
+            box-sizing: border-box;
+            width: 100%; background: #1e1f22; color: #f8fafc; border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px; padding: 8px 10px; font-size: 0.9rem;
+        }
+        .range-ends { display: flex; justify-content: space-between; font-size: 0.75rem; color: #80848e; margin-top: 4px; }
+        .secondary-btn {
+            background: #1e1f22; color: #dbdee1; border: 1px solid rgba(255,255,255,0.12); border-radius: 6px;
+            padding: 7px 12px; cursor: pointer; font-weight: 600; font-size: 0.85rem;
+        }
+        .secondary-btn:hover { background: #35373c; }
+        .secondary-btn.testing { border-color: #38bdf8; color: #38bdf8; }
+        .key-btn { min-width: 80px; }
+        .radio-list { display: flex; flex-direction: column; gap: 6px; }
+        .settings-group label.radio-row, .settings-group label.check-row {
+            display: flex; justify-content: flex-start; align-items: center; gap: 8px;
+            font-weight: 400; margin-bottom: 4px; cursor: pointer;
+        }
+        .test-row { display: flex; justify-content: space-between; align-items: center; }
+        .test-label { font-size: 0.9rem; font-weight: 600; color: #cbd5e1; }
+
+        /* The person menu and pokes */
+        .ts-user { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+        .person-menu {
+            position: fixed; z-index: 200; min-width: 210px; padding: 6px;
+            background: #111214; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5); color: #dbdee1;
+        }
+        .person-menu.hidden { display: none; }
+        .person-menu-name { font-weight: 700; color: #f8fafc; padding: 6px 8px 8px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+        .person-menu-volume { padding: 10px 8px; }
+        .person-menu-volume label { display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 8px; color: #cbd5e1; }
+        .person-menu-item {
+            display: block; width: 100%; text-align: left; background: none; border: none; color: #dbdee1;
+            padding: 8px; border-radius: 6px; cursor: pointer; font-size: 0.9rem;
+        }
+        .person-menu-item:hover { background: #35373c; }
+        .poke-footer { gap: 8px; }
+        .poke-stack {
+            position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 300;
+            display: flex; flex-direction: column; gap: 8px; width: min(360px, calc(100vw - 32px));
+        }
+        .poke-card {
+            background: #2b2d31; border: 1px solid #f59e0b; border-radius: 10px; padding: 12px 14px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5); color: #dbdee1;
+        }
+        .poke-title { font-weight: 700; color: #fbbf24; }
+        .poke-msg { margin-top: 6px; overflow-wrap: anywhere; }
+        .poke-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 0.8rem; color: #80848e; }
+
+        /* Screen sharing */
+        .control-btn.hidden { display: none; }
+        .control-btn.sharing { background: #23a559; border-color: #23a559; color: white; }
+        .share-bar {
+            display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px;
+            margin: 0 0 12px; padding: 10px 14px; border-radius: 12px;
+            background: rgba(35, 165, 89, 0.15); border: 1px solid #23a559; color: #4ade80; font-weight: 600;
+        }
+        .share-bar.hidden { display: none; }
+        .share-bar-buttons { display: flex; align-items: center; gap: 8px; }
+        .share-status { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+        .share-status::before {
+            content: ''; width: 9px; height: 9px; border-radius: 50%; background: #ef4444; flex: none;
+            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); animation: live-dot 1.6s infinite;
+        }
+        @keyframes live-dot { 70% { box-shadow: 0 0 0 7px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
+        .share-icon-btn {
+            width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            background: #2b2d31; color: #dbdee1; border: 1px solid rgba(255, 255, 255, 0.1); cursor: pointer;
+            transition: background 0.2s ease;
+        }
+        .share-icon-btn:hover { background: #383a40; color: #fff; }
+        .share-icon-btn:disabled { opacity: 0.5; cursor: default; }
+        .share-stop-btn {
+            height: 40px; padding: 0 18px; border-radius: 20px; cursor: pointer; font-weight: 600; font-size: 0.85rem;
+            background: rgba(218, 55, 60, 0.15); color: #f87171; border: 1px solid #da373c; transition: background 0.2s ease;
+        }
+        .share-stop-btn:hover { background: #da373c; color: #fff; }
+        /* What the camera films, only on your own screen; tap: bigger / smaller. */
+        .share-preview {
+            width: 72px; max-height: 128px; border-radius: 8px; background: #000; object-fit: cover; cursor: pointer;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+        .share-preview.big { width: 100%; max-height: 50vh; object-fit: contain; }
+        .share-preview.mirror { transform: scaleX(-1); }
+        .share-icon-btn.hidden, .share-preview.hidden, .share-choices.hidden, .check-row.hidden { display: none; }
+        .share-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+        /* The push-to-talk button (phones and mouse) */
+        .ptt-btn {
+            width: 100%; margin: 0 0 12px; padding: 16px; border-radius: 12px;
+            background: #2b2d31; color: #dbdee1; border: 2px solid rgba(255,255,255,0.1);
+            font-weight: 700; font-size: 1rem; cursor: pointer;
+            user-select: none; -webkit-user-select: none; touch-action: none; -webkit-touch-callout: none;
+        }
+        .ptt-btn.held { background: rgba(56, 189, 248, 0.2); border-color: #38bdf8; color: #38bdf8; }
+        .ptt-btn.hidden { display: none; }
+
+        .modal-footer {
+            padding: 16px 20px;
+            background-color: #1e1f22;
+            border-top: 1px solid rgba(255,255,255,0.05);
+            border-radius: 0 0 12px 12px;
+            display: flex;
+            justify-content: flex-end;
+        }
+        .save-btn {
+            background-color: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .save-btn:hover { background-color: #2563eb; }
+
+        /* The WATCH button in the channel tree */
+        .watch-btn {
+            background-color: rgba(34, 197, 94, 0.2);
+            color: #22c55e;
+            border: 1px solid rgba(34, 197, 94, 0.4);
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 0.65rem;
+            font-weight: bold;
+            cursor: pointer;
+            text-transform: uppercase;
+            margin-right: 4px;
+            transition: all 0.2s;
+        }
+        .watch-btn:hover {
+            background-color: #22c55e;
+            color: #111214;
+        }
+
+        /* Watching a stream above the chat (as in the TeamSpeak desktop app) */
+        .stream-panel { display: none; border-bottom: 1px solid #111214; background: #000; }
+        .stream-panel.active { display: block; }
+        .stream-stage {
+            position: relative;
+            width: 100%;
+            height: min(45vh, 520px);
+            background: #000;
+            overflow: hidden;
+        }
+        .stream-stage:fullscreen { height: 100%; }
+        #stream-video {
+            /* A tall or odd-shaped picture is fitted inside, never stretched. */
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+        }
+        .video-loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: #3b82f6;
+            font-weight: 600;
+            text-align: center;
+            max-width: 80%;
+            display: none;
+        }
+        .stream-title, .stream-close, .stream-controls { opacity: 0; transition: opacity 0.25s; }
+        .stream-stage.show-ui .stream-title, .stream-stage.show-ui .stream-close, .stream-stage.show-ui .stream-controls { opacity: 1; }
+        .stream-stage:not(.show-ui) { cursor: none; }
+        .stream-title {
+            position: absolute;
+            top: 8px; left: 12px;
+            color: #fff;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+            pointer-events: none;
+        }
+        .stream-route {
+            margin-left: 8px;
+            padding: 1px 6px;
+            border-radius: 4px;
+            background: rgba(17, 18, 20, 0.75);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            font-size: 0.7rem;
+            font-weight: 500;
+            text-shadow: none;
+        }
+        .stream-route.hidden { display: none; }
+        .stream-btn {
+            background: rgba(17, 18, 20, 0.75);
+            color: #dbdee1;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 6px;
+            padding: 4px 9px;
+            cursor: pointer;
+            font-size: 0.95rem;
+            line-height: 1.2;
+        }
+        .stream-btn:hover { background: rgba(53, 55, 60, 0.95); }
+        .stream-close { position: absolute; top: 8px; right: 10px; }
+        .stream-controls {
+            position: absolute;
+            left: 0; right: 0; bottom: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 22px 10px 8px;
+            background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+        }
+        .stream-controls input[type="range"] { width: 100px; }
+        .stream-controls .spacer { flex: 1; }
+        .user-menu-container {
+           position: relative;
+            display: inline-block;
+        }
+
+        .ts-dropdown {
+            position: absolute;
+            right: 0;
+            top: 110%;
+            background-color: #1f2937; /* Tumma harmaa */
+            border: 1px solid #374151;
+            border-radius: 6px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+            min-width: 150px;
+            z-index: 100;
+        }
+
+        .ts-dropdown.hidden {
+            display: none;
+        }
+
+        .ts-dropdown-item {
+            display: block;
+            width: 100%;
+            text-align: left;
+            background: none;
+            border: none;
+            color: #e5e7eb;
+            padding: 10px 15px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .ts-dropdown-item:hover {
+            background-color: #374151;
+        }
+
+        .text-red {
+            color: #ef4444;
+        }
+        /* --- CHAT MARKDOWN & LINKS --- */
+        .chat-link {
+            color: #38bdf8;
+            text-decoration: none;
+            word-break: break-all;
+        }
+
+        .chat-link:hover {
+            text-decoration: underline;
+        }
+
+        .chat-file-hint {
+            color: #80848e;
+            font-style: italic;
+        }
+
+        .chat-link-preview {
+            margin-top: 8px;
+            margin-bottom: 4px;
+        }
+
+        .chat-preview-img {
+            max-width: 100%;
+            max-height: 200px;
+            border-radius: 6px;
+            display: block;
+            border: 1px solid #374151;
+        }
+
+        .preview-card {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: #1f2937;
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #374151;
+            color: #9ca3af;
+            text-decoration: none;
+            font-size: 0.85rem;
+            transition: all 0.2s ease;
+        }
+
+        .preview-card:hover {
+            background: #374151;
+            color: #f3f4f6;
+            border-color: #4b5563;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app-header">
+    <h2 style="margin: 0; color: #f8fafc; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="#00a8fc"><path d="M20 13H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zm-15 5.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm15-15.5H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zm-15 5.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
+        WebTS
+    </h2>
+    
+    <!-- The menu -->
+    <div class="user-menu-container" style="position: relative; display: inline-block;">
+        <button id="user-menu-btn" class="exit-btn" style="border: none; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+            ☰
+        </button>
+        <div id="user-dropdown" class="ts-dropdown hidden">
+            <!-- Shown only when the bridge has BACK_URL / LOGOUT_URL (webts-config) -->
+            <a id="back-link" href="#" class="ts-dropdown-item" style="text-decoration: none;" hidden>Back</a>
+            <button id="logout-btn" class="ts-dropdown-item text-red" hidden>Sign out</button>
+        </div>
+    </div>
+</div>
+    <div id="connection-banner" class="connection-banner">
+        Connecting to server...
+    </div>
+    <div id="browser-notice" class="browser-notice hidden" role="note">
+        <span id="browser-notice-text"></span>
+        <button type="button" class="banner-close" id="browser-notice-close" title="Close" aria-label="Close">&times;</button>
+    </div>
+    <div class="main-container">
+        
+        <!-- LEFT PANEL: Controls & Channels -->
+        <div class="left-panel">
+            
+            <div class="controls-bar">
+                <button class="control-btn" id="toggle-mic" title="Toggle microphone">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
+                </button>
+                <button class="control-btn" id="toggle-audio" title="Toggle audio output">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                </button>
+                <!-- Screen sharing -->
+                <button class="control-btn" id="share-screen" title="Share your screen">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M20 3H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h6v2H8v2h8v-2h-2v-2h6a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 13H4V5h16v11zm-8-9.5L8.5 10H11v4h2v-4h2.5L12 6.5z"/></svg>
+                </button>
+                <!-- Settings -->
+                <button class="control-btn" id="open-settings" title="Settings">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.43-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/></svg>
+                </button>
+            </div>
+
+            <!-- The share's state: how many watch, and stop -->
+            <div class="share-bar hidden" id="share-bar">
+                <video class="share-preview hidden" id="share-preview" muted playsinline autoplay title="Tap to make bigger or smaller"></video>
+                <span class="share-status" id="share-status">Sharing</span>
+                <span class="share-bar-buttons">
+                    <button class="share-icon-btn hidden" id="share-flip" title="Switch camera" aria-label="Switch camera"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M16 7h-1l-1-1h-4L9 7H8c-1.1 0-2 .9-2 2v6c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V9c0-1.1-.9-2-2-2zm-4 7c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/><path d="M8.57.51l4.48 4.48V2.04c4.72.47 8.48 4.23 8.95 8.95h2C23.34 3.02 15.49-1.59 8.57.51zm2.38 21.45c-4.72-.47-8.48-4.23-8.95-8.95H0c.66 7.97 8.51 12.58 15.43 10.48l-4.48-4.48v2.95z"/></svg></button>
+                    <button class="share-stop-btn" id="share-stop">Stop</button>
+                </span>
+            </div>
+
+            <!-- Push-to-talk: shown only in push-to-talk mode -->
+            <button class="ptt-btn hidden" id="ptt-btn">Hold to talk</button>
+
+            <div class="ts-widget">
+                <div class="ts-header">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <button type="button" id="server-name-display" class="server-name-btn" title="Server info">TeamSpeak Server</button>
+                    </div>
+                </div>
+                <div id="ts-content" class="ts-content">
+                    <div class="ts-loading">Connecting to server...</div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- RIGHT PANEL: Chat -->
+        <div class="chat-panel">
+            <div class="chat-header" id="chat-header">
+                <span style="color: #80848e;">#</span> Select a channel
+            </div>
+            
+            <!-- Watching a stream: shown after WATCH -->
+            <div class="stream-panel" id="video-modal">
+                <div class="stream-stage" id="stream-stage">
+                    <video id="stream-video" autoplay playsinline></video>
+                    <div id="video-loading" class="video-loading">Connecting...</div>
+                    <div class="stream-title"><span id="video-title">Watching Stream</span><span class="stream-route hidden" id="video-route"></span></div>
+                    <button class="stream-btn stream-close" id="close-video" title="Stop watching">&times;</button>
+                    <div class="stream-controls">
+                        <button class="stream-btn" id="video-mute" title="Mute / unmute the stream's sound">🔊</button>
+                        <input id="video-volume" type="range" min="0" max="1" step="0.05" value="1" title="Stream volume">
+                        <span class="spacer"></span>
+                        <button class="stream-btn" id="video-pip" title="Pop out: keep watching in a small window">⧉</button>
+                        <button class="stream-btn" id="video-fullscreen" title="Full screen">⛶</button>
+                    </div>
+                </div>
+            </div>
+            <div class="chat-messages" id="chat-messages">
+                <div style="color: #80848e; text-align: center; margin-top: 40px; font-size: 0.9rem;">
+                    No messages. Select a channel on the left to join the conversation.
+                </div>
+            </div>
+            
+            <div class="chat-picture-pending" id="chat-picture-pending" hidden>
+                <img alt="The picture you pasted">
+                <span class="chat-picture-pending-text"></span>
+                <button type="button" class="chat-picture-pending-send" id="chat-picture-send">Send</button>
+                <button type="button" class="chat-picture-pending-remove" id="chat-picture-remove" title="Don't send it" aria-label="Don't send it">✕</button>
+            </div>
+            <div class="chat-picture-status" id="chat-picture-status" role="status" hidden></div>
+            <form class="chat-input-area" id="chat-form">
+                <button type="button" class="chat-picture-btn" id="chat-picture-btn" title="Send a picture" aria-label="Send a picture" disabled>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><path d="M21 15l-5-5L5 21"></path></svg>
+                </button>
+                <input type="file" id="chat-picture-file" accept="image/*" hidden>
+                <input type="file" id="chat-picture-camera" accept="image/*" capture="environment" hidden>
+                <div class="chat-picture-menu" id="chat-picture-menu" role="menu" hidden>
+                    <button type="button" role="menuitem" data-pick="chat-picture-camera">📷 Take a photo</button>
+                    <button type="button" role="menuitem" data-pick="chat-picture-file">🖼️ Choose a picture</button>
+                </div>
+                <input type="text" class="chat-input" id="chat-input" placeholder="Select a channel first..." disabled>
+            </form>
+        </div>
+
+    </div>
+    <!-- The person menu: right-click or press and hold -->
+    <div class="person-menu hidden" id="person-menu" role="menu">
+        <div class="person-menu-name" id="person-menu-name"></div>
+        <div class="person-menu-volume">
+            <label for="person-menu-vol">Volume for you <span id="person-menu-vol-val" class="val-badge">100%</span></label>
+            <input type="range" id="person-menu-vol" min="0" max="2" step="0.05" value="1">
+        </div>
+        <button class="person-menu-item" id="person-menu-poke" role="menuitem">Poke…</button>
+        <button class="person-menu-item" id="person-menu-chat" role="menuitem">Private chat</button>
+    </div>
+
+    <!-- Screen sharing: size, frame rate and sound -->
+    <div class="modal-overlay" id="share-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="share-title">Share your screen</h3>
+                <button class="close-btn" id="share-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="settings-group hidden" id="share-source-group">
+                    <label for="share-source">What</label>
+                    <select id="share-source" class="settings-select">
+                        <option value="screen">Screen, window or tab</option>
+                        <option value="camera">Camera</option>
+                    </select>
+                </div>
+                <div class="share-choices share-camera-only hidden">
+                    <div class="settings-group">
+                        <label for="camera-facing">Camera</label>
+                        <select id="camera-facing" class="settings-select">
+                            <option value="environment">Back</option>
+                            <option value="user">Front</option>
+                        </select>
+                    </div>
+                    <div class="settings-group">
+                        <label for="camera-quality">Quality</label>
+                        <select id="camera-quality" class="settings-select">
+                            <option value="480">Data saver (480p)</option>
+                            <option value="720">Normal (720p)</option>
+                        </select>
+                    </div>
+                </div>
+                <label class="check-row share-camera-only hidden"><input type="checkbox" id="camera-sound"> Include sound</label>
+                <p class="setting-desc share-camera-only hidden">With sound, the stream sends what the microphone hears all the time (no push-to-talk), so viewers hear the surroundings. It pauses while you talk to the channel and while your microphone is muted. Headphones keep friends' voices out of it. Keep this page open with the screen on (a phone pauses the camera otherwise); 🔄 switches between the back and front cameras while streaming. On mobile data, every viewer is a separate upload: about 0.45 GB per hour per viewer at 480p, 0.9 GB at 720p.</p>
+                <div class="share-choices share-screen-only">
+                    <div class="settings-group">
+                        <label for="share-resolution">Resolution</label>
+                        <select id="share-resolution" class="settings-select">
+                            <option value="720">720p</option>
+                            <option value="1080">1080p</option>
+                            <option value="1440">1440p</option>
+                            <option value="2160">4K</option>
+                            <option value="source">Original size</option>
+                        </select>
+                    </div>
+                    <div class="settings-group">
+                        <label for="share-fps">Frame rate</label>
+                        <select id="share-fps" class="settings-select">
+                            <option value="30">30 fps</option>
+                            <option value="60">60 fps</option>
+                        </select>
+                    </div>
+                </div>
+                <label class="check-row share-screen-only"><input type="checkbox" id="share-audio"> Include sound</label>
+                <p class="setting-desc share-screen-only">Sound comes only from a <b>Chrome tab</b> (switch on "Also share tab audio") or an <b>entire screen</b> (switch on "Also share system audio"), e.g. for a game. A single window has no sound. Your friends' voices from this page are left out, so they don't hear themselves; don't run the desktop TeamSpeak client at the same time.</p>
+                <p class="setting-desc share-screen-only">The resolution is a ceiling: a smaller window keeps its own size and shape. From 2.5 Mbit/s (720p 30) to 10 Mbit/s (4K 60) per viewer, and every viewer is a separate upload from your computer. The video goes straight to the viewers (or through the relay, if your network needs it). Works in Chrome and Edge.</p>
+            </div>
+            <div class="modal-footer poke-footer">
+                <button type="button" class="secondary-btn" id="share-cancel">Cancel</button>
+                <button type="button" class="save-btn" id="share-start">Choose what to share…</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Server info -->
+    <div class="modal-overlay" id="server-info-modal">
+        <div class="modal-content server-info-content">
+            <div class="modal-header">
+                <h3 id="server-info-title">Server info</h3>
+                <button class="close-btn" id="server-info-close">&times;</button>
+            </div>
+            <div class="modal-body" id="server-info-body"></div>
+        </div>
+    </div>
+
+    <!-- Poke -->
+    <div class="modal-overlay" id="poke-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="poke-title">Poke</h3>
+                <button class="close-btn" id="poke-close">&times;</button>
+            </div>
+            <form id="poke-form">
+                <div class="modal-body">
+                    <input type="text" id="poke-msg" class="settings-select" maxlength="100" placeholder="Optional message..." autocomplete="off">
+                </div>
+                <div class="modal-footer poke-footer">
+                    <button type="button" class="secondary-btn" id="poke-cancel">Cancel</button>
+                    <button type="submit" class="save-btn">Poke</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <div class="poke-stack" id="poke-stack"></div>
+
+    <!-- ASETUSVALIKKO (MODAL): General / Playback / Capture -->
+    <div class="modal-overlay" id="settings-modal">
+        <div class="modal-content settings-content">
+            <div class="modal-header">
+                <h3>Settings</h3>
+                <button class="close-btn" id="close-settings">&times;</button>
+            </div>
+            <div class="settings-tabs" role="tablist">
+                <button class="settings-tab active" data-tab="general" role="tab">General</button>
+                <button class="settings-tab" data-tab="playback" role="tab">Playback</button>
+                <button class="settings-tab" data-tab="capture" role="tab">Capture</button>
+            </div>
+            <div class="modal-body">
+
+                <div class="settings-page" data-page="general">
+                    <div class="settings-group">
+                        <label>Nickname</label>
+                        <div class="input-prefix-group">
+                            <span class="prefix">Web - </span>
+                            <input type="text" id="setting-nick" placeholder="Alex">
+                        </div>
+                    </div>
+                    <p class="setting-desc">Settings are saved for this browser on this device (another browser has its own).</p>
+                    <div class="settings-group">
+                        <label for="setting-video-connection">Video connection</label>
+                        <select id="setting-video-connection" class="settings-select">
+                            <option value="auto">Automatic (recommended)</option>
+                            <option value="relay">Always through relay</option>
+                        </select>
+                        <p class="setting-desc">Use "Always through relay" in case automatic is not working.</p>
+                    </div>
+                    <p class="setting-desc" id="relay-info">Relay: …</p>
+                </div>
+
+                <div class="settings-page hidden" data-page="playback">
+                    <div class="settings-group" id="output-device-group">
+                        <label for="setting-output-device">Playback device</label>
+                        <select id="setting-output-device" class="settings-select"></select>
+                    </div>
+                    <p class="setting-desc hidden" id="output-device-note">This browser plays through the system's default device.</p>
+                    <div class="settings-group">
+                        <label>Voice volume <span id="val-in-vol" class="val-badge">0 dB</span></label>
+                        <input type="range" id="setting-in-vol" min="-20" max="12" step="1" value="0">
+                        <div class="range-ends"><span>Quiet</span><span>Loud</span></div>
+                    </div>
+                    <div class="settings-group">
+                        <button class="secondary-btn" id="play-test-sound">&#9654; Play test sound</button>
+                    </div>
+                    <p class="setting-desc hidden" id="media-volume-note">On a phone, voices follow the media volume: press a volume button, then &#8942; and turn up Media.</p>
+                    <div class="settings-group">
+                        <label>UI sounds</label>
+                        <label class="check-row"><input type="checkbox" id="setting-sounds"> Play TeamSpeak's sounds (joins, leaves, pokes, messages...)</label>
+                    </div>
+                    <div class="settings-group">
+                        <label>Sound volume <span id="val-sound-vol" class="val-badge">100%</span></label>
+                        <input type="range" id="setting-sound-vol" min="0" max="1" step="0.05" value="1">
+                    </div>
+                </div>
+
+                <div class="settings-page hidden" data-page="capture">
+                    <div class="settings-group">
+                        <label for="setting-input-device">Capture device</label>
+                        <select id="setting-input-device" class="settings-select"></select>
+                    </div>
+                    <div class="settings-group">
+                        <label>Microphone volume <span id="val-out-vol" class="val-badge">100%</span></label>
+                        <input type="range" id="setting-out-vol" min="0" max="3" step="0.1" value="1">
+                    </div>
+                    <div class="settings-group">
+                        <label>Activation</label>
+                        <div class="radio-list">
+                            <label class="radio-row"><input type="radio" name="activation" value="vad"> Voice activation</label>
+                            <label class="radio-row"><input type="radio" name="activation" value="ptt"> Push-to-talk</label>
+                            <label class="radio-row"><input type="radio" name="activation" value="continuous"> Continuous transmission</label>
+                        </div>
+                    </div>
+                    <div class="settings-group" id="ptt-group">
+                        <label>Push-to-talk key <button class="secondary-btn key-btn" id="setting-ptt-key">Space</button></label>
+                        <p class="setting-desc" id="ptt-key-desc">The key works while this page is the active window. The "Hold to talk" button works too.</p>
+                        <p class="setting-desc hidden" id="ptt-touch-desc">Hold the "Hold to talk" button while you speak.</p>
+                    </div>
+                    <div class="settings-group">
+                        <div class="test-row">
+                            <span class="test-label">Level</span>
+                            <button class="secondary-btn" id="mic-test">Start test</button>
+                        </div>
+                        <!-- The live level meter and threshold line -->
+                        <div class="audio-meter-bg">
+                            <div class="audio-meter-fill" id="vad-meter-fill"></div>
+                            <div class="audio-meter-threshold" id="vad-threshold-line"></div>
+                        </div>
+                        <p class="setting-desc">The test lets you hear yourself; nothing is sent meanwhile.</p>
+                    </div>
+                    <div id="vad-group">
+                        <div class="settings-group">
+                            <label>Voice activation level <span id="val-vad" class="val-badge">1.0%</span></label>
+                            <input type="range" id="setting-vad" min="0" max="0.1" step="0.001" value="0.01">
+                            <p class="setting-desc">Slide right to block background noise. If your voice cuts out, slide left.</p>
+                        </div>
+                        <div class="settings-group">
+                            <label>Delay before deactivation <span id="val-tail" class="val-badge">0.6 s</span></label>
+                            <input type="range" id="setting-tail" min="0.1" max="2" step="0.1" value="0.6">
+                        </div>
+                    </div>
+                    <div class="settings-group">
+                        <label>Signal processing</label>
+                        <label class="check-row"><input type="checkbox" id="setting-noise"> Remove background noise</label>
+                        <label class="check-row"><input type="checkbox" id="setting-echo"> Echo cancellation</label>
+                        <label class="check-row"><input type="checkbox" id="setting-agc"> Automatic gain control</label>
+                    </div>
+                </div>
+
+            </div>
+            <div class="modal-footer">
+                <button class="save-btn" id="save-settings">Save &amp; Apply</button>
+            </div>
+        </div>
+    </div>
+
+
+    <script src="chat-pictures.js"></script>
+    <script src="ts-client.js"></script>
+</body>
+</html>
