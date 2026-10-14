@@ -17,7 +17,8 @@ server: voice, chat, pictures and streams, on a PC or a phone, with nothing to i
   power respected. Works in Chrome, Edge, Safari and Firefox (also Firefox on Android, through Opus in WebAssembly).
 - **The channel tree** as the TeamSpeak app shows it: the server's own icons, group badges, avatars, spacers and
   channel banners, in the server's order. Move between channels with a click.
-- **Chat:** channel and private chat, pokes, link previews.
+- **Chat:** channel and private chat, pokes, link previews, and optionally a chat history across days, locked on
+  disk (like the TeamSpeak app keeps it).
 - **Pictures:** send a photo (camera or gallery on a phone, paste or drop on a PC). It goes into the channel's file
   browser and shows in the TeamSpeak app too. Hidden photo details such as GPS location are removed first.
 - **Streams:** watch screen shares and cameras from the TeamSpeak 6 app, and share your own screen or camera
@@ -101,6 +102,23 @@ a TURN relay carries the video instead. Either your own **coturn** (`TURN_URLS` 
 `static-auth-secret`) or **Cloudflare Realtime TURN** (`CF_TURN_KEY_ID` + `CF_TURN_KEY_TOKEN`, optionally a monthly
 cap with `CF_ACCOUNT_ID` + `CF_ANALYTICS_TOKEN`). Browsers use the relay only when a direct connection fails.
 
+## Chat history (optional)
+
+With `CHAT_HISTORY=on`, WebTS keeps each person's channel chats, private chats and join/leave lines for
+`CHAT_HISTORY_DAYS` (30) days, at most `CHAT_HISTORY_LINES` (300) lines per conversation, and shows them again the
+next time they open WebTS, with the day ("21:36 - Mon") like the TeamSpeak app.
+
+- **Only what they were there for:** a person's history holds only what their own connection saw while WebTS was
+  open, and channel chat only from the channel they were in. Unlike the app on an always-on PC, WebTS can't fill in
+  what happened while the page was closed.
+- **Stored on your server:** one file per person in `DATA_DIR/chat/`, locked with `CHAT_HISTORY_KEY`
+  (AES-256-GCM). Keep the key out of your backups of the data folder, and those copies can't be read; but while
+  WebTS runs it has the key, so whoever runs the server can read the chat. Tell your users.
+- Pictures stay in the channel's file browser; the history holds only the line that shows them.
+- Lines past their days go automatically; the file of someone who hasn't been back for that long is removed.
+- A file that doesn't open (another key, damaged) is left as it is and that person gets no history.
+  Lost the key? Set a new one: the history starts over, and the old files are removed after `CHAT_HISTORY_DAYS`.
+
 ## Known limitations
 
 - **Watching streams in Firefox doesn't work:** the TeamSpeak 6 app never completes the connection to Firefox (it
@@ -117,7 +135,7 @@ See [`.env.example`](.env.example): every setting with a short explanation.
 
 ```bash
 npm ci
-npm test          # offline tests: protocol encryption, file transfer, access modes, pictures
+npm test          # offline tests: protocol encryption, file transfer, access modes, pictures, chat history
 npm run typecheck
 npm start         # needs the settings as environment variables (or a .env loaded by your shell)
 ```

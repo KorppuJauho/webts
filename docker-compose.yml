@@ -10,7 +10,7 @@ services:
     ports:
       - "127.0.0.1:3002:3002"   # only this computer; your reverse proxy or tunnel reaches it here
     volumes:
-      - ./data:/app/data          # TeamSpeak identities and saved settings: keep and back up
+      - ./data:/app/data          # TeamSpeak identities, saved settings and the chat history: keep and back up
       - ./sounds:/app/sounds:ro   # optional: TeamSpeak's UI sounds (README: "Sounds")
     read_only: true
     tmpfs:

@@ -1255,11 +1255,32 @@ socket.on('disconnect', (reason) => {
 
 // --- STATE MANAGEMENT ---
 // --- CHAT HISTORY (Session Storage) ---
-// The history stays in this tab until it is closed
-let localChatHistory = JSON.parse(sessionStorage.getItem('ts_chat_history') || '{}');
+// The history stays in this tab until it is closed. When the bridge keeps a chat history (CHAT_HISTORY=on) it sends
+// the days before at connect ('ts-history'); this copy is then only for reloads.
+let chatKeep = 300; // lines per conversation (a bridge that keeps more raises it)
+let localChatHistory = {};
+try { localChatHistory = JSON.parse(sessionStorage.getItem('ts_chat_history') || '{}') || {}; } catch (e) {}
 
 function saveChatHistory() {
-    sessionStorage.setItem('ts_chat_history', JSON.stringify(localChatHistory));
+    try { sessionStorage.setItem('ts_chat_history', JSON.stringify(localChatHistory)); } catch (e) {} // full: the bridge has it
+}
+
+// The chat follows the newest line while you are at the bottom; scrolled up to read older ones, a picture that
+// finishes loading doesn't pull you back down.
+let chatAtBottom = true;
+chatMessagesEl.addEventListener('scroll', () => {
+    chatAtBottom = chatMessagesEl.scrollHeight - chatMessagesEl.scrollTop - chatMessagesEl.clientHeight < 60;
+});
+function chatPictureLoaded() {
+    if (chatAtBottom) chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+}
+// A whole conversation goes in first and scrolls down once, not once per line.
+let chatBulk = false;
+function renderMessages(list) {
+    chatBulk = true;
+    try { list.forEach((m) => renderSingleMessage(m)); } finally { chatBulk = false; }
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    chatAtBottom = true;
 }
 
 // Private chats: one tab per person, by their TeamSpeak identity (uid), so a reconnect keeps the
@@ -1276,23 +1297,27 @@ let picturesEnabled = true;            // the bridge's PICTURES setting
 let pendingPicture = null;             // a pasted picture waiting for Send: { file, url }
 let channelChatReady = false;          // a channel has been picked (its chat can be written to)
 
-// Files a message under its channel or its private conversation; false if it was already there.
-function fileMessage(msg) {
+// Files a message under its channel or its private conversation; false if it was already there. From the history:
+// no private chat tab is opened for it (opening a chat with that person shows it), and the caller sorts and trims.
+function fileMessage(msg, fromHistory = false) {
+    if (!msg) return null;
     let key = null;
     if (msg.targetmode === 2 && msg.cid) key = msg.cid;
     if (msg.targetmode === 1 && msg.partnerUid) {
         key = 'pm:' + msg.partnerUid;
         const tab = privateTabs[msg.partnerUid];
-        if (!tab) privateTabs[msg.partnerUid] = { name: msg.partnerName || 'Private chat', unread: 0 };
-        else if (msg.partnerName && !msg.outgoing) tab.name = msg.partnerName;
+        if (!fromHistory) {
+            if (!tab) privateTabs[msg.partnerUid] = { name: msg.partnerName || 'Private chat', unread: 0 };
+            else if (msg.partnerName && !msg.outgoing) tab.name = msg.partnerName;
+        }
     }
     if (key === null) return null;
     if (!localChatHistory[key]) localChatHistory[key] = [];
     // No duplicates (each message has its own id)
     if (localChatHistory[key].find(m => m.id === msg.id)) return null;
     localChatHistory[key].push(msg);
-    // At most 100 messages per conversation
-    if (localChatHistory[key].length > 100) localChatHistory[key].shift();
+    // At most chatKeep messages per conversation
+    if (!fromHistory && localChatHistory[key].length > chatKeep) localChatHistory[key].shift();
     return key;
 }
 
@@ -1366,7 +1391,7 @@ function renderActiveChat() {
         if (history.length === 0) {
             chatMessagesEl.innerHTML = '<div class="chat-empty" style="color: #80848e; text-align: center; margin-top: 40px; font-size: 0.9rem;">No private messages yet.</div>';
         }
-        history.forEach(m => renderSingleMessage(m));
+        renderMessages(history);
     } else if (activeChannelId !== null) {
         renderChatForChannel(activeChannelId);
     }
@@ -1462,6 +1487,28 @@ socket.on('ts-state', (state) => {
     renderChannelTree();
 });
 
+// The days before, from the bridge's chat history: filed like the messages, without sounds or unread marks, each
+// conversation in time order.
+socket.on('ts-history', (list) => {
+    if (!Array.isArray(list)) return;
+    const touched = new Set();
+    const counts = {};
+    list.forEach((m) => {
+        const key = fileMessage(m, true);
+        if (key !== null) touched.add(key);
+        if (m) { const c = m.targetmode === 1 ? 'pm:' + m.partnerUid : m.cid; counts[c] = (counts[c] || 0) + 1; }
+    });
+    chatKeep = Math.max(chatKeep, ...Object.values(counts));
+    if (!touched.size) return;
+    touched.forEach((key) => {
+        const msgs = localChatHistory[key];
+        if (msgs.every((m) => typeof m.time === 'number')) msgs.sort((a, b) => a.time - b.time);
+        if (msgs.length > chatKeep) msgs.splice(0, msgs.length - chatKeep);
+    });
+    saveChatHistory();
+    renderActiveChat();
+});
+
 socket.on('ts-message', (msgObj) => {
     const key = fileMessage(msgObj);
     if (key === null) return;
@@ -1503,7 +1550,7 @@ function renderEventLine(msgObj) {
     const empty = chatMessagesEl.querySelector('.chat-empty');
     if (empty) empty.remove();
     chatMessagesEl.appendChild(line);
-    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    if (!chatBulk) chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
 }
 
 function renderSingleMessage(msgObj) {
@@ -1529,7 +1576,7 @@ function renderSingleMessage(msgObj) {
             // Scroll the chat down once the picture has loaded
             previewHtml += `
             <div class="chat-link-preview">
-                <img src="${url}" alt="" class="chat-preview-img" referrerpolicy="no-referrer" onload="document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight" onerror="this.parentElement.remove()">
+                <img src="${url}" alt="" class="chat-preview-img" referrerpolicy="no-referrer" loading="lazy" onload="chatPictureLoaded()" onerror="this.parentElement.remove()">
             </div>`;
         } else {
             // Tavallisen linkin turvallinen infokortti
@@ -1559,7 +1606,7 @@ function renderSingleMessage(msgObj) {
     const empty = chatMessagesEl.querySelector('.chat-empty'); // "No messages yet" goes with the first message
     if (empty) empty.remove();
     chatMessagesEl.appendChild(msgEl);
-    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    if (!chatBulk) chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
 }
 
 function renderChatForChannel(cid) {
@@ -1571,7 +1618,7 @@ function renderChatForChannel(cid) {
         return;
     }
     
-    history.forEach(m => renderSingleMessage(m));
+    renderMessages(history);
 }
 
 document.getElementById('chat-form').addEventListener('submit', (e) => {
@@ -1771,7 +1818,7 @@ function channelPictureHtml(picture) {
     const name = escapeHtml(picture.name);
     return `
             <div class="chat-link-preview chat-picture">
-                <a href="${src}" target="_blank" rel="noopener" title="${name}"><img src="${src}" alt="${name}" class="chat-preview-img" onload="document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight" onerror="retryChannelPicture(this)"></a>
+                <a href="${src}" target="_blank" rel="noopener" title="${name}"><img src="${src}" alt="${name}" class="chat-preview-img" loading="lazy" onload="chatPictureLoaded()" onerror="retryChannelPicture(this)"></a>
             </div>`;
 }
 
@@ -2357,10 +2404,21 @@ function renderChannelTree() {
 }
 
 // --- UTILITY ---
-// A message's time in the viewer's own format (the bridge sends the moment; older messages only a text).
+// A message's time in the viewer's own format (the bridge sends the moment; older messages only a text), with the day
+// like the TeamSpeak app: just the time today, "21:36 - Mon" in the six days before, "21:36 - 6 Oct" earlier.
 function messageTime(msg) {
     if (msg && Number(msg.time) > 0) {
-        try { return new Date(Number(msg.time)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (e) {}
+        try {
+            const at = Number(msg.time);
+            const d = new Date(at);
+            const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const now = new Date();
+            if (at >= new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) return time;
+            if (at >= new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime()) {
+                return `${time} - ${d.toLocaleDateString([], { weekday: 'short' })}`;
+            }
+            return `${time} - ${d.toLocaleDateString([], { day: 'numeric', month: 'short' })}`;
+        } catch (e) {}
     }
     return (msg && msg.timestamp) || '';
 }

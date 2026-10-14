@@ -2,6 +2,7 @@
 // bridge with a clear message rather than running half-configured.
 
 import path from "path";
+import { parseHistoryKey } from "./chat-history.js";
 
 export type AccessMode = "cloudflare-access" | "header" | "public" | "signed-note";
 
@@ -71,6 +72,12 @@ function readConfig() {
     pictureMaxMb: number("PICTURE_MAX_MB", 15, 1, 100),
     pictureFolder: env("PICTURE_FOLDER") || "/webTS",
 
+    // Chat history across days (README: "Chat history"): off unless CHAT_HISTORY=on, which needs CHAT_HISTORY_KEY.
+    chatHistory: flag("CHAT_HISTORY", false),
+    chatHistoryKey: parseHistoryKey(env("CHAT_HISTORY_KEY")),
+    chatHistoryDays: number("CHAT_HISTORY_DAYS", 30, 1, 3650),
+    chatHistoryLines: number("CHAT_HISTORY_LINES", 300, 10, 5000),
+
     // The optional relay for people whose network blocks direct connections
     turnUrls: env("TURN_URLS").split(",").map((u) => u.trim()).filter(Boolean),
     turnSecret: env("TURN_SECRET"),
@@ -93,6 +100,9 @@ function readConfig() {
   if (config.backUrl && !/^https?:\/\/\S+$/i.test(config.backUrl)) fail(`BACK_URL must be an http(s) address (got "${config.backUrl}")`);
   if (config.logoutUrl && !/^(https?:\/\/\S+|\/\S*)$/i.test(config.logoutUrl)) fail(`LOGOUT_URL must be an http(s) address or a path (got "${config.logoutUrl}")`);
   if (!/^\/[A-Za-z0-9_-]{1,40}$/.test(config.pictureFolder)) fail(`PICTURE_FOLDER must look like /webTS (got "${config.pictureFolder}")`);
+  if (config.chatHistory && !config.chatHistoryKey) {
+    fail("CHAT_HISTORY=on needs CHAT_HISTORY_KEY: 32 random bytes as base64, e.g. from: node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"");
+  }
   if (config.turnUrls.length && !config.turnSecret) fail("TURN_URLS needs TURN_SECRET (the static-auth-secret of your coturn server)");
   return config;
 }

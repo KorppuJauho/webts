@@ -15,6 +15,7 @@ import { Ts3Client, generateIdentity, restoreIdentity, buildCommand, ParsedComma
 import { imageType, channelImageRef, pictureName, pictureMessage, PictureCache,
     iconId, iconFileName, avatarFileNames, iconType, groupIds, ICON_MAX_BYTES, AVATAR_MAX_BYTES } from './pictures.js';
 import { channelLabel, enterEvent, moveEvent, leaveEvent, type EventPart } from './chat-events.js';
+import { ChatHistoryStore } from './chat-history.js';
 import { config } from './config.js';
 import { createAccess, Person } from './access.js';
 
@@ -72,6 +73,25 @@ async function prepareDataDir(): Promise<void> {
     }
 }
 await prepareDataDir();
+
+// --- CHAT HISTORY ---
+// Off unless CHAT_HISTORY=on (then the chat lasts while the page is open). When on, each person's chat is kept in
+// DATA_DIR/chat/, locked with CHAT_HISTORY_KEY. chat-history.ts has the rules.
+let chatHistory: ChatHistoryStore | null = null;
+if (config.chatHistory && config.chatHistoryKey) {
+    const store = new ChatHistoryStore(path.join(DATA_DIR, 'chat'), config.chatHistoryKey,
+        { days: config.chatHistoryDays, lines: config.chatHistoryLines });
+    if (await store.prepare()) {
+        chatHistory = store;
+        console.log(`[History] On: ${config.chatHistoryDays} days, at most ${config.chatHistoryLines} lines per conversation, locked`);
+        void store.sweep();
+        setInterval(() => void store.sweep(), 6 * 3_600_000).unref();
+    } else {
+        console.log("[History] Off: the chat folder can't be written (everything else works)");
+    }
+} else {
+    console.log('[History] Off (CHAT_HISTORY is not on)');
+}
 
 const app = express();
 app.disable('x-powered-by');
@@ -482,7 +502,7 @@ interface ChatMessage {
     cid?: number;         // the channel a channel message was written in
     msg: string;
     timestamp: string;
-    time?: number;        // ms; the page formats it for the viewer
+    time: number;         // ms; the page formats it for the viewer (and the chat history keeps it)
     invokeruid?: string;  // the sender's identity, for their avatar
     // Private messages (targetmode 1): the other person by their identity, and whether we sent it.
     partnerUid?: string;
@@ -732,8 +752,10 @@ io.on('connection', async (socket) => {
     // Cleanup is registered first: a page closed while its bot is still connecting must not leave the bot
     // on the server (it would hold the identity and refuse the next connection).
     let closed = false;
+    let historyOpen = false;
     socket.on('disconnect', () => {
         closed = true;
+        if (historyOpen && chatHistory) void chatHistory.release(email); // written now
         console.log(`[WebSocket] Client disconnected: ${email}. Cleaning up bot...`);
         const bot = activeBots.get(socketId);
         if (bot) {
@@ -892,6 +914,10 @@ io.on('connection', async (socket) => {
     const label = (cid: number) => channelLabel(channels.get(cid)?.name);
     // Who made each channel: TeamSpeak moves the maker into it "by Server", which reads like a switch of their own.
     const channelMaker = new Map<number, number>();
+    // Kept for the following days too, when the chat history is on.
+    const keepInHistory = (m: ChatMessage) => {
+        if (historyOpen && chatHistory) chatHistory.add(email, m);
+    };
     const chatEvent = (cid: number, parts: EventPart[] | null) => {
         if (!parts || !(cid > 0) || Date.now() < soundsFrom) return;
         const msgObj: ChatMessage = {
@@ -905,6 +931,7 @@ io.on('connection', async (socket) => {
             timestamp: new Date().toISOString().slice(11, 16),
             event: parts
         };
+        keepInHistory(msgObj);
         messages.push(msgObj);
         if (messages.length > 200) messages.shift();
         if (socket.connected) socket.emit('ts-message', msgObj);
@@ -953,6 +980,14 @@ io.on('connection', async (socket) => {
             channelGroups: Array.from(channelGroupList.values()).filter(g => g.iconId > 0),
             messages
         });
+    }
+
+    // The days before: sent once, before TeamSpeak connects (not with every state update).
+    if (chatHistory && !closed) {
+        historyOpen = true;
+        const past = await chatHistory.open(email);
+        if (closed) return;
+        if (past.length) socket.emit('ts-history', past);
     }
 
     try {
@@ -1505,6 +1540,7 @@ io.on('connection', async (socket) => {
                         timestamp: new Date().toISOString().slice(11, 16),
                         ...(targetmode === 1 ? { partnerUid, partnerName, outgoing } : {})
                     };
+                    keepInHistory(msgObj);
                     messages.push(msgObj);
                     if (messages.length > 200) messages.shift();
                     socket.emit('ts-message', msgObj);
@@ -2182,6 +2218,7 @@ function shutDown(signal: string) {
         try { bot.disconnect(); } catch (e) {}
     }
     io.close();
+    if (chatHistory) void chatHistory.flushAll(); // the last lines (well within the 1.5 s)
     setTimeout(() => process.exit(0), 1500); // disconnect() sends at once and cleans up after 500 ms
 }
 process.on('SIGTERM', () => shutDown('SIGTERM'));
