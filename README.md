@@ -79,6 +79,10 @@ WebTS users are ordinary TeamSpeak clients and get the server's normal permissio
 permission to upload files (and to create the picture folder) in channels; viewers need permission to download
 files. If uploads are refused, WebTS says so in the chat.
 
+The TeamSpeak apps fetch pictures from the server's file transfer port, which the server tells them is 30033 (its
+own port). If you publish the server's port 30033 under another number (e.g. Docker `30035:30033`), the apps get no
+answer and show pictures as empty boxes, while WebTS still shows them. Publish it as the same number.
+
 ## Sounds
 
 TeamSpeak's own UI sounds are copyrighted and not included. To have them, copy the `.wav` files from your own
