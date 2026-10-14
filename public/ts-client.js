@@ -3442,6 +3442,21 @@ function showShareState() {
 // ("NullVideoDecoder"): it decodes only its own Constrained High (640c). Constrained Baseline, which a browser
 // sends, is a subset of it, so the offer shows H.264 to TeamSpeak as 640c (relabelShareOfferH264) and the
 // answer is put back. Then AV1/VP9 if the browser says it encodes them in hardware, then VP8.
+// Only one entry of each, as TeamSpeak's own offer has (a phone may list eight H.264 variants, all relabelled to the
+// same 640c, and H.265, which TeamSpeak never offers). H.264 keeps its first packetization-mode=1 variant, the one
+// TeamSpeak picks; other formats are left out.
+function oneOfEachShareCodec(codecs) {
+    const seen = new Set();
+    return codecs.filter((codec) => {
+        const name = ((codec.mimeType || '').split('/')[1] || '').toUpperCase();
+        if (!['H264', 'AV1', 'VP9', 'VP8'].includes(name)) return ['RTX', 'RED', 'ULPFEC', 'FLEXFEC-03'].includes(name);
+        if (name === 'H264' && !/packetization-mode=1/.test(codec.sdpFmtpLine || '')) return false;
+        if (seen.has(name)) return false;
+        seen.add(name);
+        return true;
+    });
+}
+
 async function shareCodecPreferences(width, height, fps, bitrate) {
     const caps = (window.RTCRtpSender && RTCRtpSender.getCapabilities && RTCRtpSender.getCapabilities('video')) || null;
     if (!caps) return null;
@@ -3465,7 +3480,7 @@ async function shareCodecPreferences(width, height, fps, bitrate) {
         return i < 0 ? mimes.length + 1 : i; // rtx, red and fec after the formats
     };
     streamDiagnostics('share', `hardware encode: ${hardware.join(',') || 'none'}; preferring ${order[0]}`);
-    return [...caps.codecs].sort((a, b) => rank(a) - rank(b));
+    return oneOfEachShareCodec([...caps.codecs].sort((a, b) => rank(a) - rank(b)));
 }
 
 // Our offer as TeamSpeak sees it: every H.264 format as Constrained High (640c + the same level); `original`
@@ -3851,6 +3866,10 @@ socket.on('publish-viewer', async (data) => {
             try { transceiver.setCodecPreferences(share.codecs); } catch (e) { console.warn('[Share] Codec order not applied:', e.message); }
         }
     }
+    // Without sound the offer still gets a sound line (with no track: nothing is sent). The TeamSpeak app 6.0.0-beta5
+    // never answers a video-only offer: its log stops at HandleRemoteOffer, while the same share with sound is
+    // answered at once.
+    if (!share.stream.getAudioTracks().length) pc.addTransceiver('audio', { direction: 'sendonly' });
     pc.onicecandidate = (event) => {
         if (!event.candidate || !event.candidate.candidate) return;
         const ice = {
