@@ -743,6 +743,14 @@
             padding: 7px 12px; cursor: pointer; font-weight: 600; font-size: 0.85rem;
         }
         .secondary-btn:hover { background: #35373c; }
+        .server-picker-list { gap: 8px; }
+        .server-choice {
+            background: #1e1f22; color: #dbdee1; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
+            padding: 12px 14px; cursor: pointer; font-weight: 600; font-size: 0.95rem; text-align: left;
+        }
+        .server-choice:hover { background: #35373c; }
+        .server-choice.current { border-color: #3b82f6; }
+        .server-choice.current::after { content: ' (connected)'; color: #80848e; font-weight: 400; }
         .secondary-btn.testing { border-color: #38bdf8; color: #38bdf8; }
         .key-btn { min-width: 80px; }
         .radio-list { display: flex; flex-direction: column; gap: 6px; }
@@ -1050,6 +1058,7 @@
         </button>
         <div id="user-dropdown" class="ts-dropdown hidden">
             <!-- Shown only when the bridge has BACK_URL / LOGOUT_URL (webts-config) -->
+            <button id="server-switch" class="ts-dropdown-item" hidden>Change server</button>
             <a id="back-link" href="#" class="ts-dropdown-item" style="text-decoration: none;" hidden>Back</a>
             <button id="logout-btn" class="ts-dropdown-item text-red" hidden>Sign out</button>
         </div>
@@ -1231,6 +1240,17 @@
                 <button type="button" class="secondary-btn" id="share-cancel">Cancel</button>
                 <button type="button" class="save-btn" id="share-start">Choose what to share…</button>
             </div>
+        </div>
+    </div>
+
+    <!-- The server list: first when WebTS offers several servers, and from the menu ("Change server") -->
+    <div class="modal-overlay" id="server-picker">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Choose a server</h3>
+                <button class="close-btn" id="server-picker-close" hidden>&times;</button>
+            </div>
+            <div class="modal-body server-picker-list" id="server-picker-list"></div>
         </div>
     </div>
 

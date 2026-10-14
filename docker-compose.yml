@@ -12,6 +12,8 @@ services:
     volumes:
       - ./data:/app/data          # TeamSpeak identities, saved settings and the chat history: keep and back up
       - ./sounds:/app/sounds:ro   # optional: TeamSpeak's UI sounds (README: "Sounds")
+      # Several servers (README: "Several servers"): create servers.json first, then uncomment.
+      # - ./servers.json:/app/servers.json:ro
     read_only: true
     tmpfs:
       - /tmp

@@ -745,6 +745,48 @@ document.addEventListener('click', () => {
 
 // Sign out: only when the bridge names a sign-out address (LOGOUT_URL; with Cloudflare Access, Access's own).
 let logoutUrl = '';
+
+// Several servers (servers.json): the one picked on this device (or in the address, ?server=), else the list first.
+// Picking another one loads the page again, so the tree, chat and streams all start clean for it; this tab's chat
+// copy is kept per server.
+let chosenServer = '';
+try { chosenServer = new URLSearchParams(location.search).get('server') || localStorage.getItem('webts_server') || ''; } catch (e) {}
+const SERVER_SCOPE = chosenServer ? ':' + chosenServer : '';
+let serverList = [];                    // [{ id, name }], only when there are several
+const serverPicker = document.getElementById('server-picker');
+function showServerPicker(canClose) {
+    const list = document.getElementById('server-picker-list');
+    list.innerHTML = '';
+    serverList.forEach((s) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'server-choice' + (s.id === chosenServer && canClose ? ' current' : '');
+        b.textContent = s.name;
+        b.addEventListener('click', () => chooseServer(s.id));
+        list.appendChild(b);
+    });
+    document.getElementById('server-picker-close').hidden = !canClose;
+    serverPicker.dataset.closable = canClose ? '1' : '';
+    if (!canClose) { // not connected anywhere yet: say so, not "Connecting..."
+        hideBanner();
+        tsContent.innerHTML = '<div class="ts-loading">Choose a server</div>';
+    }
+    serverPicker.classList.add('active');
+}
+function chooseServer(id) {
+    if (id === chosenServer && socket.connected) { serverPicker.classList.remove('active'); return; }
+    let remembered = false;
+    try { localStorage.setItem('webts_server', id); remembered = localStorage.getItem('webts_server') === id; } catch (e) {}
+    stopMic();
+    socket.disconnect();
+    if (remembered && !new URLSearchParams(location.search).has('server')) location.reload();
+    else location.search = '?server=' + encodeURIComponent(id); // without storage: in the address
+}
+document.getElementById('server-picker-close').addEventListener('click', () => serverPicker.classList.remove('active'));
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && serverPicker.dataset.closable) serverPicker.classList.remove('active');
+});
+document.getElementById('server-switch').addEventListener('click', () => showServerPicker(true));
 document.getElementById('logout-btn').addEventListener('click', () => {
     if (!logoutUrl) return;
     stopMic();
@@ -1041,7 +1083,7 @@ saveSettingsBtn.addEventListener('click', () => {
     if (before.nick !== appSettings.nick && socket) {
         console.log("[Settings] Nickname changed. Reconnecting WebSocket...");
         socket.disconnect();
-        socket.io.opts.query = { nick: appSettings.nick };
+        socket.io.opts.query = { nick: appSettings.nick, server: chosenServer };
         setTimeout(() => socket.connect(), 500);
     }
 });
@@ -1080,7 +1122,27 @@ const SOCKET_URL = window.location.origin;
 const socket = io(SOCKET_URL, {
     withCredentials: true,
     transports: ['websocket', 'polling'],
-    query: { nick: appSettings.nick }
+    query: { nick: appSettings.nick, server: chosenServer },
+    autoConnect: false // first the server list (startConnection)
+});
+
+// With several servers and none picked yet (or one that's no longer offered): the list first.
+(async function startConnection() {
+    try {
+        const r = await fetch('/servers', { credentials: 'same-origin', cache: 'no-store' });
+        if (r.ok) {
+            const list = ((await r.json()).servers || []).filter((s) => s && typeof s.id === 'string' && typeof s.name === 'string');
+            if (list.length > 1) serverList = list;
+        }
+    } catch (e) {}
+    if (serverList.length > 1 && !serverList.some((s) => s.id === chosenServer)) return showServerPicker(false);
+    socket.connect();
+})();
+socket.on('connect_error', (err) => {
+    if (err && err.message === 'Unknown server' && serverList.length > 1) {
+        socket.disconnect();
+        showServerPicker(false);
+    }
 });
 
 showPttState();
@@ -1103,7 +1165,9 @@ socket.on('webts-config', (cfg) => {
         back.textContent = cfg.backLabel || 'Back';
     }
     show(back, hasBack);
-    show(document.getElementById('user-menu-btn'), hasBack || !!logoutUrl);
+    if (Array.isArray(cfg.servers) && cfg.servers.length > 1) serverList = cfg.servers;
+    show(document.getElementById('server-switch'), serverList.length > 1);
+    show(document.getElementById('user-menu-btn'), hasBack || !!logoutUrl || serverList.length > 1);
     picturesEnabled = cfg.picturesEnabled !== false;
     if (Number(cfg.pictureMaxMb) > 0) PICTURE_MAX_BYTES = Number(cfg.pictureMaxMb) * 1024 * 1024;
     updatePictureButton();
@@ -1259,10 +1323,10 @@ socket.on('disconnect', (reason) => {
 // the days before at connect ('ts-history'); this copy is then only for reloads.
 let chatKeep = 300; // lines per conversation (a bridge that keeps more raises it)
 let localChatHistory = {};
-try { localChatHistory = JSON.parse(sessionStorage.getItem('ts_chat_history') || '{}') || {}; } catch (e) {}
+try { localChatHistory = JSON.parse(sessionStorage.getItem('ts_chat_history' + SERVER_SCOPE) || '{}') || {}; } catch (e) {}
 
 function saveChatHistory() {
-    try { sessionStorage.setItem('ts_chat_history', JSON.stringify(localChatHistory)); } catch (e) {} // full: the bridge has it
+    try { sessionStorage.setItem('ts_chat_history' + SERVER_SCOPE, JSON.stringify(localChatHistory)); } catch (e) {} // full: the bridge has it
 }
 
 // The chat follows the newest line while you are at the bottom; scrolled up to read older ones, a picture that
@@ -1286,9 +1350,9 @@ function renderMessages(list) {
 // Private chats: one tab per person, by their TeamSpeak identity (uid), so a reconnect keeps the
 // conversation. History lives like the channel chat's: in this browser tab and in the bridge while it runs.
 let privateTabs = {}; // uid -> { name, unread }
-try { privateTabs = JSON.parse(sessionStorage.getItem('ts_private_tabs') || '{}') || {}; } catch (e) {}
+try { privateTabs = JSON.parse(sessionStorage.getItem('ts_private_tabs' + SERVER_SCOPE) || '{}') || {}; } catch (e) {}
 function savePrivateTabs() {
-    try { sessionStorage.setItem('ts_private_tabs', JSON.stringify(privateTabs)); } catch (e) {}
+    try { sessionStorage.setItem('ts_private_tabs' + SERVER_SCOPE, JSON.stringify(privateTabs)); } catch (e) {}
 }
 let chatView = { type: 'channel' };   // or { type: 'pm', uid }
 let activeChannelName = '';

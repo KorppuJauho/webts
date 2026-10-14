@@ -17,13 +17,15 @@ import { imageType, channelImageRef, pictureName, pictureMessage, PictureCache,
 import { channelLabel, enterEvent, moveEvent, leaveEvent, type EventPart } from './chat-events.js';
 import { ChatHistoryStore } from './chat-history.js';
 import { config } from './config.js';
+import { pickServer, publicServer, type TsServer } from './servers.js';
 import { createAccess, Person } from './access.js';
 
 // --- CONFIGURATION ---
 const access = createAccess(config);
-const TS_HOST = config.tsHost;
-// Pictures, icons and avatars: the server's address, and TS_FILE_PORT when set (else the port the server names).
-const FILE_TARGET = { host: TS_HOST, port: config.tsFilePort || undefined };
+// The servers people can use: one from the TS_* settings, or several from servers.json (src/servers.ts).
+const SERVERS = config.servers;
+// Where the bytes of a server's files go: its address, and its file port when set (else the port the server names).
+const fileTarget = (s: TsServer) => ({ host: s.host, port: s.filePort });
 const DATA_DIR = config.dataDir;
 const IDENTITIES_FILE = path.join(DATA_DIR, 'identities.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
@@ -129,6 +131,11 @@ app.get(['/', '/index.html'], async (req, res) => {
     }
     res.set({ 'Content-Security-Policy': PAGE_CSP, 'Cache-Control': 'no-store', 'X-Frame-Options': 'SAMEORIGIN' });
     res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+});
+// The servers to choose from, for the page's list before it connects: ids and names only.
+app.get('/servers', async (req, res) => {
+    if (!(await access.identify(req))) return res.status(401).end();
+    res.set('Cache-Control', 'no-store').json({ servers: SERVERS.map(publicServer) });
 });
 // Revalidated on every load (ETag), so an update reaches everyone at once.
 app.use(express.static(PUBLIC_DIR, { index: false, maxAge: 0 }));
@@ -296,6 +303,10 @@ io.use(async (socket, next) => {
         console.warn(`[Access] Connection refused: not signed in (${access.mode}).`);
         return next(new Error('Access denied'));
     }
+    // The server the page picked: one of the list, never anything else (with one server the page needn't say).
+    const tsServer = pickServer(SERVERS, socket.handshake.query.server);
+    if (!tsServer) return next(new Error('Unknown server'));
+    (socket as any).tsServer = tsServer;
     if (activeBots.size >= config.maxUsers && !sessionByKey.has(person.key)) {
         console.warn(`[Access] Connection refused: MAX_USERS (${config.maxUsers}) reached.`);
         return next(new Error('WebTS is full right now. Please try again later.'));
@@ -542,20 +553,22 @@ const pictureFetches = new Map<string, Promise<Buffer>>();         // the same p
 // address. Too many at once and it answers "client is flooding" (524) and ignores them; more, and it bans the address
 // for a while (3329), which shuts out every WebTS user. Sent in one burst right after connecting, the channel
 // subscriptions were ignored and nobody in other channels was visible. So the commands sent in bulk (the start-up lists, channel subscriptions, stream info requests) leave one at a
-// time, PACE_MS apart, for all connections together. What a person does (chat, moving, muting) still goes at once.
+// time, PACE_MS apart, for all connections to the same server together (the limit is each server's). What a person
+// does (chat, moving, muting) still goes at once.
 // Measured on a TeamSpeak 6 test server (2026-10-14): 18 of these commands at once passed, 36 at once got 9 refused;
 // 100 ms apart is well inside that. (It was 250 ms, which made opening the page slow.)
 const PACE_MS = 100;
-let paceChain: Promise<void> = Promise.resolve();
-function paced(work: () => void): Promise<void> {
-    const run = paceChain.then(() => {
+const paceChains = new Map<string, Promise<void>>();  // server id -> its queue
+const botServer = new WeakMap<Ts3Client, string>();   // which server a connection is on
+function paced(serverId: string, work: () => void): Promise<void> {
+    const run = (paceChains.get(serverId) || Promise.resolve()).then(() => {
         try { work(); } catch (e) {}
     });
-    paceChain = run.then(() => new Promise<void>((resolve) => setTimeout(resolve, PACE_MS)));
+    paceChains.set(serverId, run.then(() => new Promise<void>((resolve) => setTimeout(resolve, PACE_MS))));
     return run;
 }
 function sendPaced(bot: Ts3Client, cmd: string): Promise<void> {
-    return paced(() => {
+    return paced(botServer.get(bot) || '', () => {
         if (bot.getState() === 'connected') bot.sendCommand(cmd);
     });
 }
@@ -580,13 +593,13 @@ function queueTransfer<T>(bot: Ts3Client, work: () => Promise<T>): Promise<T> {
     });
 }
 
-function fetchPicture(personKey: string, bot: Ts3Client, cid: number, fullPath: string): Promise<Buffer> {
-    const key = `${personKey}|${cid}|${fullPath}`;
+function fetchPicture(personKey: string, server: TsServer, bot: Ts3Client, cid: number, fullPath: string): Promise<Buffer> {
+    const key = `${server.id}|${personKey}|${cid}|${fullPath}`;
     const cached = pictureCache.get(key);
     if (cached) return Promise.resolve(cached);
     const running = pictureFetches.get(key);
     if (running) return running;
-    const fetching = queueTransfer(bot, () => downloadFile(bot, FILE_TARGET, cid, fullPath, PICTURE_SERVE_MAX))
+    const fetching = queueTransfer(bot, () => downloadFile(bot, fileTarget(server), cid, fullPath, PICTURE_SERVE_MAX))
         .then((data) => {
             pictureCache.set(key, data);
             return data;
@@ -611,10 +624,10 @@ app.get('/channel-image', async (req, res) => {
     const ref = channelImageRef(req.query as Record<string, unknown>);
     if (!ref) return res.status(404).end();
     // Only while the person is on the server (the page tries again once it has connected).
-    const bot = await waitForSessionBot(person.key);
-    if (!bot) return res.status(503).set('Retry-After', '3').end();
+    const on = await waitForSessionBot(person.key);
+    if (!on) return res.status(503).set('Retry-After', '3').end();
     try {
-        const data = await fetchPicture(person.key, bot, ref.cid, ref.fullPath);
+        const data = await fetchPicture(person.key, on.server, on.bot, ref.cid, ref.fullPath);
         const type = imageType(data);
         if (!type) return res.status(415).end();
         res.set({
@@ -636,38 +649,42 @@ app.get('/channel-image', async (req, res) => {
 // The page shows the server's own icons (channels, groups, people, the server) and avatars, from the server's files
 // (channel 0), fetched with the asking person's own connection like the pictures. Every client may fetch these (the
 // TeamSpeak app does), so they are kept for everyone: 30 MB, 6 hours; a missing one isn't asked again for 10 minutes.
+// All three are kept per server (keys start with the server's id): each server has its own "icon 123".
 const iconCache = new PictureCache(30 * 1024 * 1024, 6 * 60 * 60 * 1000);
 const iconMissing = new Map<string, number>();        // file -> until when it counts as missing
 const avatarFound = new Map<string, string>();        // identity -> the avatar file name that worked
 let avatarNamingLogged = false;
 
-function sessionBot(personKey: string): Ts3Client | null {
+// The person's TeamSpeak connection, and the server it's on.
+function sessionBot(personKey: string): { bot: Ts3Client; server: TsServer } | null {
     const session = sessionByKey.get(personKey);
     const bot = session ? activeBots.get(session.id) : undefined;
-    return bot && bot.getState() === 'connected' ? bot : null;
+    const server: TsServer | undefined = session ? (session as any).tsServer : undefined;
+    return bot && server && bot.getState() === 'connected' ? { bot, server } : null;
 }
 
 // Right after the page opens, it asks for pictures and icons before the person's TeamSpeak connection is up. Instead of
 // "try again later", wait for the connection a little, so they come as soon as it is.
-async function waitForSessionBot(personKey: string, ms = 10_000): Promise<Ts3Client | null> {
+async function waitForSessionBot(personKey: string, ms = 10_000): Promise<{ bot: Ts3Client; server: TsServer } | null> {
     const until = Date.now() + ms;
     for (;;) {
-        const bot = sessionBot(personKey);
-        if (bot || Date.now() >= until) return bot;
+        const on = sessionBot(personKey);
+        if (on || Date.now() >= until) return on;
         await new Promise((resolve) => setTimeout(resolve, 250));
     }
 }
 
-async function fetchServerFile(bot: Ts3Client, name: string, maxBytes: number): Promise<Buffer | null> {
-    const cached = iconCache.get(name);
+async function fetchServerFile(server: TsServer, bot: Ts3Client, name: string, maxBytes: number): Promise<Buffer | null> {
+    const key = `${server.id}|${name}`;
+    const cached = iconCache.get(key);
     if (cached) return cached;
-    if ((iconMissing.get(name) || 0) > Date.now()) return null;
+    if ((iconMissing.get(key) || 0) > Date.now()) return null;
     try {
-        const data = await queueTransfer(bot, () => downloadFile(bot, FILE_TARGET, 0, name, maxBytes));
-        iconCache.set(name, data);
+        const data = await queueTransfer(bot, () => downloadFile(bot, fileTarget(server), 0, name, maxBytes));
+        iconCache.set(key, data);
         return data;
     } catch (e: any) {
-        iconMissing.set(name, Date.now() + 10 * 60 * 1000);
+        iconMissing.set(key, Date.now() + 10 * 60 * 1000);
         if (iconMissing.size > 2000) iconMissing.clear();
         return null;
     }
@@ -696,9 +713,9 @@ app.get('/server-icon', async (req, res) => {
     if (!person) return res.status(403).end();
     const name = iconFileName(Number(req.query.id));
     if (!name) return res.status(404).end();
-    const bot = await waitForSessionBot(person.key);
-    if (!bot) return res.status(503).set('Retry-After', '3').end();
-    const data = await fetchServerFile(bot, name, ICON_MAX_BYTES);
+    const on = await waitForSessionBot(person.key);
+    if (!on) return res.status(503).set('Retry-After', '3').end();
+    const data = await fetchServerFile(on.server, on.bot, name, ICON_MAX_BYTES);
     if (!data) return res.status(404).end();
     sendIcon(res, data, true);
 });
@@ -708,16 +725,16 @@ app.get('/avatar', async (req, res) => {
     if (!person) return res.status(403).end();
     const uid = typeof req.query.uid === 'string' ? req.query.uid : '';
     const serverName = typeof req.query.name === 'string' ? req.query.name : undefined;
-    const known = avatarFound.get(uid);
+    if (!avatarFileNames(uid, serverName).length) return res.status(404).end();
+    const on = await waitForSessionBot(person.key);
+    if (!on) return res.status(503).set('Retry-After', '3').end();
+    const known = avatarFound.get(`${on.server.id}|${uid}`);
     const names = known ? [known] : avatarFileNames(uid, serverName);
-    if (!names.length) return res.status(404).end();
-    const bot = await waitForSessionBot(person.key);
-    if (!bot) return res.status(503).set('Retry-After', '3').end();
     for (const [i, name] of names.entries()) {
-        const data = await fetchServerFile(bot, name, AVATAR_MAX_BYTES);
+        const data = await fetchServerFile(on.server, on.bot, name, AVATAR_MAX_BYTES);
         if (!data) continue;
         if (!known) {
-            avatarFound.set(uid, name);
+            avatarFound.set(`${on.server.id}|${uid}`, name);
             if (avatarFound.size > 2000) avatarFound.clear();
             if (!avatarNamingLogged) {
                 avatarNamingLogged = true;
@@ -735,6 +752,10 @@ io.on('connection', async (socket) => {
     const person: Person = (socket as any).person;
     const email: string = person.key;
     const socketId = socket.id;
+    // The server picked in the page (io.use checked it). Its chat history is the person's own for that server; the
+    // server with the id "main" (the TS_* settings' one) keeps the plain key, so adding servers later keeps its history.
+    const tsServer: TsServer = (socket as any).tsServer;
+    const historyKey = tsServer.id === 'main' ? email : `${email}@${tsServer.id}`;
 
     // The nickname the page asks for (its settings), else the name from the sign-in.
     const requestedNick = typeof socket.handshake.query.nick === 'string' ? socket.handshake.query.nick.trim().slice(0, 30) : '';
@@ -748,7 +769,10 @@ io.on('connection', async (socket) => {
         backUrl: config.backUrl,
         backLabel: config.backLabel,
         picturesEnabled: config.picturesEnabled,
-        pictureMaxMb: config.pictureMaxMb
+        pictureMaxMb: config.pictureMaxMb,
+        // The server list (only when there are several) and the one this connection is on.
+        servers: SERVERS.length > 1 ? SERVERS.map(publicServer) : [],
+        server: tsServer.id
     });
 
     // Cleanup is registered first: a page closed while its bot is still connecting must not leave the bot
@@ -757,7 +781,7 @@ io.on('connection', async (socket) => {
     let historyOpen = false;
     socket.on('disconnect', () => {
         closed = true;
-        if (historyOpen && chatHistory) void chatHistory.release(email); // written now
+        if (historyOpen && chatHistory) void chatHistory.release(historyKey); // written now
         console.log(`[WebSocket] Client disconnected: ${email}. Cleaning up bot...`);
         const bot = activeBots.get(socketId);
         if (bot) {
@@ -918,7 +942,7 @@ io.on('connection', async (socket) => {
     const channelMaker = new Map<number, number>();
     // Kept for the following days too, when the chat history is on.
     const keepInHistory = (m: ChatMessage) => {
-        if (historyOpen && chatHistory) chatHistory.add(email, m);
+        if (historyOpen && chatHistory) chatHistory.add(historyKey, m);
     };
     const chatEvent = (cid: number, parts: EventPart[] | null) => {
         if (!parts || !(cid > 0) || Date.now() < soundsFrom) return;
@@ -987,7 +1011,7 @@ io.on('connection', async (socket) => {
     // The days before: sent once, before TeamSpeak connects (not with every state update).
     if (chatHistory && !closed) {
         historyOpen = true;
-        const past = await chatHistory.open(email);
+        const past = await chatHistory.open(historyKey);
         if (closed) return;
         if (past.length) socket.emit('ts-history', past);
     }
@@ -997,6 +1021,7 @@ io.on('connection', async (socket) => {
         if (closed) return;
 
         userBot = new Ts3Client();
+        botServer.set(userBot, tsServer.id);
         activeBots.set(socketId, userBot);
 
         // --- Sending voice in the channel's own codec ---
@@ -1814,12 +1839,12 @@ io.on('connection', async (socket) => {
         });
 
         await userBot.connect({
-            host: TS_HOST,
-            port: config.tsPort,
+            host: tsServer.host,
+            port: tsServer.port,
             nickname: botNickname,
             identity: userSpecificIdentity,
-            serverPassword: config.tsServerPassword,
-            defaultChannel: config.tsDefaultChannel
+            serverPassword: tsServer.password,
+            defaultChannel: tsServer.defaultChannel
         });
         
         if (closed) {
@@ -1827,7 +1852,7 @@ io.on('connection', async (socket) => {
             userBot.disconnect();
             return;
         }
-        console.log(`[TeamSpeak] Bot '${botNickname}' successfully connected to ${TS_HOST}`);
+        console.log(`[TeamSpeak] Bot '${botNickname}' successfully connected to ${tsServer.name} (${tsServer.host})`);
         soundsFrom = Date.now() + 3000;
         socket.emit('ts-sound', 'connected');
 
@@ -1951,7 +1976,7 @@ io.on('connection', async (socket) => {
                 // A folder that's there already is fine; without the right to make one, the upload says what's wrong.
                 await createDirectory(bot, cid, IMAGE_FOLDER).catch((e: any) =>
                     console.log(`[Pictures] ${botNickname}: no ${IMAGE_FOLDER} folder made in channel ${cid}: ${e.message} (${e.code})`));
-                await uploadFile(bot, FILE_TARGET, cid, `${IMAGE_FOLDER}/${name}`, data);
+                await uploadFile(bot, fileTarget(tsServer), cid, `${IMAGE_FOLDER}/${name}`, data);
             });
             console.log(`[Pictures] ${botNickname} shared ${name} (${(data.length / 1048576).toFixed(1)} MB) in channel ${cid}`);
             bot.sendCommand(buildCommand('sendtextmessage', { targetmode: 2, target: cid, msg: pictureMessage(name, cid, IMAGE_FOLDER) }));
@@ -2243,5 +2268,5 @@ if (relay.coturn) {
 }
 
 server.listen(PORT, () => {
-    console.log(`[Server] WebTS running on port ${PORT} (access: ${access.mode}; TeamSpeak server ${TS_HOST}:${config.tsPort}${config.tsFilePort ? `, files on port ${config.tsFilePort}` : ''})`);
+    console.log(`[Server] WebTS running on port ${PORT} (access: ${access.mode}; TeamSpeak ${SERVERS.map((s) => `${s.id}=${s.host}:${s.port}${s.filePort ? ` files:${s.filePort}` : ''}`).join(', ')})`);
 });

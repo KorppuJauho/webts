@@ -3,6 +3,7 @@ data
 sounds
 .env
 .env.*
+servers.json
 .git
 .github
 test

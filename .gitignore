@@ -4,6 +4,7 @@ sounds/
 .env
 .env.*
 !.env.example
+servers.json
 *.log
 dist/
 .DS_Store

@@ -123,6 +123,21 @@ next time they open WebTS, with the day ("21:36 - Mon") like the TeamSpeak app.
 - A file that doesn't open (another key, damaged) is left as it is and that person gets no history.
   Lost the key? Set a new one: the history starts over, and the old files are removed after `CHAT_HISTORY_DAYS`.
 
+## Several servers (optional)
+
+WebTS can offer several TeamSpeak servers: people pick one from a list when they open it, and switch with "Change
+server" in the menu. List them in `servers.json` (copy `servers.example.json`; with Docker, uncomment its line in
+`docker-compose.yml`). When the file is there, the `TS_*` settings aren't used.
+
+- Each server: `id` (letters, digits, `-`, `_`), `name` (what the list shows), `host`, and optionally `port` (9987),
+  `filePort` (like `TS_FILE_PORT`), `password` and `defaultChannel`.
+- Only the servers you list: nobody can make WebTS connect anywhere else, so it can't be used to reach or flood other
+  people's servers from your address. The page only ever learns their ids and names.
+- One server at a time per person (switching reconnects). Everyone let in may use every server on the list.
+- Each person keeps one TeamSpeak identity for all of them, like the TeamSpeak app. Their chat history is kept per
+  server; give the server you started with the id `main` to keep its history from before.
+- `servers.json` can hold server passwords: keep it out of git and readable only by you.
+
 ## Known limitations
 
 - **Watching streams in Firefox doesn't work:** the TeamSpeak 6 app never completes the connection to Firefox (it

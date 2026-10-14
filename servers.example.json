@@ -1,0 +1,19 @@
+{
+  "servers": [
+    {
+      "id": "main",
+      "name": "Our server",
+      "host": "teamspeak",
+      "port": 9987
+    },
+    {
+      "id": "friends",
+      "name": "Friends' server",
+      "host": "ts.example.com",
+      "port": 9987,
+      "filePort": 30035,
+      "password": "only if the server has one",
+      "defaultChannel": "Lobby"
+    }
+  ]
+}

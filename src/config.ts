@@ -1,8 +1,10 @@
 // WebTS settings, all from environment variables (see .env.example). Read once at start; a wrong value stops the
 // bridge with a clear message rather than running half-configured.
 
+import fs from "fs";
 import path from "path";
 import { parseHistoryKey } from "./chat-history.js";
+import { parseServers, serverFromSettings, type TsServer } from "./servers.js";
 
 export type AccessMode = "cloudflare-access" | "header" | "public" | "signed-note";
 
@@ -106,7 +108,29 @@ function readConfig() {
     fail("CHAT_HISTORY=on needs CHAT_HISTORY_KEY: 32 random bytes as base64, e.g. from: node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"");
   }
   if (config.turnUrls.length && !config.turnSecret) fail("TURN_URLS needs TURN_SECRET (the static-auth-secret of your coturn server)");
-  return config;
+  return { ...config, servers: readServers(config) };
+}
+
+// The servers people can use (README: "Several servers"): servers.json when there is one (SERVERS_FILE, default
+// ./servers.json), else the single server of the TS_* settings.
+function readServers(c: { tsHost: string; tsPort: number; tsFilePort: number; tsServerPassword?: string; tsDefaultChannel?: string }): TsServer[] {
+  const asked = env("SERVERS_FILE");
+  const file = path.resolve(asked || "servers.json");
+  let text: string | null = null;
+  try {
+    text = fs.readFileSync(file, "utf-8");
+  } catch (e: any) {
+    if (asked || e.code !== "ENOENT") fail(`SERVERS_FILE ${file} can't be read (${e.code || e.message})`);
+  }
+  if (text === null) {
+    return [serverFromSettings({ host: c.tsHost, port: c.tsPort, filePort: c.tsFilePort,
+      password: c.tsServerPassword, defaultChannel: c.tsDefaultChannel })];
+  }
+  try {
+    return parseServers(text);
+  } catch (e: any) {
+    fail(e.message);
+  }
 }
 
 export const config = readConfig();
