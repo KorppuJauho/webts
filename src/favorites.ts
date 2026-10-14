@@ -8,6 +8,7 @@ import { parseAddress, addressText } from "./any-server.js";
 export interface Favorite {
   address: string; // as addressText writes it
   name: string;    // the person's own name for it ('' = the address)
+  nick: string;    // their nickname on that server ('' = their usual one)
   auto: boolean;   // connect to it when the page opens
 }
 
@@ -22,12 +23,14 @@ export function cleanFavorites(input: unknown): Favorite[] | null {
     if (!raw || typeof raw !== "object") return null;
     const typed = parseAddress((raw as any).address);
     if (!typed) return null;
-    const name = typeof (raw as any).name === "string" ? (raw as any).name.trim().slice(0, 60).replace(/[\u0000-\u001f]/g, "") : "";
+    const text = (v: unknown, max: number) => typeof v === "string" ? v.replace(/[\u0000-\u001f]/g, "").trim().slice(0, max) : "";
+    const name = text((raw as any).name, 60);
+    const nick = text((raw as any).nick, 30);
     const address = addressText(typed);
     if (out.some((f) => f.address === address)) continue;
     const wantsAuto = (raw as any).auto === true && !auto;
     if (wantsAuto) auto = true;
-    out.push({ address, name, auto: wantsAuto });
+    out.push({ address, name, nick, auto: wantsAuto });
   }
   return out;
 }

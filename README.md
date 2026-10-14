@@ -143,7 +143,8 @@ server" in the menu. List them in `servers.json` (copy `servers.example.json`; w
 With `ALLOW_ANY_SERVER=on`, people can type any TeamSpeak server's address: `ts.example.com`, `203.0.113.7:9987`
 or `[2001:db8::1]:9987`. A name without a port is looked up like the TeamSpeak app does (its `_ts3._udp` record
 first). They can save servers as favourites (kept by WebTS, so they follow them to their other devices) and mark one
-with ★ to connect to it when WebTS opens; the menu lists the favourites and "Connect to...". Servers you list
+with ★ to connect to it when WebTS opens; the menu lists the favourites and "Connect to...". Right-click a favourite
+(or its ✎) to edit its name, address, the nickname used on that server, its password and auto-connect. Servers you list
 (`servers.json`, or `TS_HOST` when set) are shown as suggestions.
 
 **Think before switching it on.** Every connection comes from your machine's address: whatever people do on other

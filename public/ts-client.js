@@ -816,6 +816,9 @@ function rememberPassword(address, password, keep) {
 // As the bridge writes addresses: lower case, the default port left out.
 const plainAddress = (a) => String(a || '').trim().toLowerCase().replace(/^(\[[^\]]+\]|[^:]+):9987$/, '$1');
 
+// Connecting to a favourite: its address, the password kept in this browser, and the nickname set for it.
+const favoriteChoice = (f) => ({ address: f.address, password: savedPasswords()[f.address] || '', nick: f.nick || '' });
+
 // This tab's chat copy follows the server it's on.
 function useServerScope(scope) {
     if (scope === SERVER_SCOPE) return;
@@ -842,7 +845,7 @@ function startOn(choice) {
         connectAuth = { address: choice.address, password: choice.password || '' };
         currentAddress = plainAddress(choice.address);
         useServerScope(':addr:' + currentAddress);
-        socket.io.opts.query = { nick: appSettings.nick };
+        socket.io.opts.query = { nick: choice.nick || appSettings.nick }; // a favourite's own nickname, if it has one
     } else {
         connectAuth = {};
         currentAddress = '';
@@ -859,19 +862,20 @@ async function loadFavorites() {
         if (r.ok) favorites = (await r.json()).favorites || [];
     } catch (e) {}
 }
-async function saveFavorites(list) {
+// Saves the whole list; true when the bridge took it (it answers with the list as kept).
+async function saveFavorites(list, quiet) {
+    let ok = false;
     try {
         const r = await fetch('/favorites', {
             method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ favorites: list })
         });
-        if (r.ok) favorites = (await r.json()).favorites || [];
-        else showBanner("The favourites couldn't be saved.", 'error', null, { hideAfterMs: 6000 });
-    } catch (e) {
-        showBanner("The favourites couldn't be saved.", 'error', null, { hideAfterMs: 6000 });
-    }
+        if (r.ok) { favorites = (await r.json()).favorites || []; ok = true; }
+    } catch (e) {}
+    if (!ok && !quiet) showBanner("The favourites couldn't be saved.", 'error', null, { hideAfterMs: 6000 });
     renderServerMenu();
     renderConnectLists();
+    return ok;
 }
 
 function showConnect(canClose, error, address) {
@@ -912,8 +916,15 @@ function renderConnectLists() {
         go.type = 'button';
         go.className = 'server-choice' + (f.address === currentAddress && everConnected ? ' current' : '');
         go.textContent = f.name || f.address;
-        go.title = f.address;
-        go.addEventListener('click', () => connectTo({ address: f.address, password: savedPasswords()[f.address] || '' }));
+        go.title = `${f.address} (right-click to edit)`;
+        go.addEventListener('click', () => connectTo(favoriteChoice(f)));
+        go.addEventListener('contextmenu', (e) => { e.preventDefault(); editFavorite(f); });
+        const pen = document.createElement('button');
+        pen.type = 'button';
+        pen.className = 'fav-btn';
+        pen.textContent = '✎';
+        pen.title = 'Edit: name, address, nickname, password';
+        pen.addEventListener('click', () => editFavorite(f));
         const star = document.createElement('button');
         star.type = 'button';
         star.className = 'fav-btn' + (f.auto ? ' on' : '');
@@ -926,7 +937,7 @@ function renderConnectLists() {
         remove.textContent = '×';
         remove.title = 'Remove from favourites';
         remove.addEventListener('click', () => saveFavorites(favorites.filter((x) => x.address !== f.address)));
-        row.append(go, star, remove);
+        row.append(go, pen, star, remove);
         favEl.appendChild(row);
     });
     const srvEl = document.getElementById('connect-servers');
@@ -959,9 +970,13 @@ function renderServerMenu() {
         if (title) b.title = title;
         b.addEventListener('click', onClick);
         box.appendChild(b);
+        return b;
     };
-    favorites.forEach((f) => item((f.address === currentAddress ? '● ' : '★ ') + (f.name || f.address),
-        () => connectTo({ address: f.address, password: savedPasswords()[f.address] || '' }), f.address));
+    favorites.forEach((f) => {
+        const b = item((f.address === currentAddress ? '● ' : '★ ') + (f.name || f.address), () => connectTo(favoriteChoice(f)),
+            `${f.address} (right-click to edit)`);
+        b.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); editFavorite(f); });
+    });
     item('Connect to...', () => showConnect(true, '', ''));
     if (currentAddress && everConnected && !favorites.some((f) => f.address === currentAddress)) {
         item('☆ Add to favourites', () => saveFavorites([...favorites, { address: currentAddress, name: '', auto: false }]));
@@ -985,6 +1000,73 @@ connectAddress.addEventListener('input', () => {
     document.getElementById('connect-favorite-row').hidden = favorites.some((f) => f.address === plainAddress(connectAddress.value));
 });
 document.getElementById('connect-close').addEventListener('click', closeConnect);
+
+// Editing a favourite (right-click it, here or in the menu, or its ✎): its name, address, the nickname used there, the
+// password (kept in this browser only) and whether it connects when WebTS opens. Changing the one you're on reconnects.
+const favModal = document.getElementById('fav-modal');
+let favEditing = null; // the favourite's address when the window opened
+function editFavorite(f) {
+    favEditing = f.address;
+    document.getElementById('fav-name').value = f.name || '';
+    document.getElementById('fav-name').placeholder = f.address;
+    document.getElementById('fav-address').value = f.address;
+    document.getElementById('fav-nick').value = f.nick || '';
+    document.getElementById('fav-nick').placeholder = appSettings.nick || 'Your usual nickname';
+    document.getElementById('fav-password').value = savedPasswords()[f.address] || '';
+    document.getElementById('fav-auto').checked = !!f.auto;
+    const err = document.getElementById('fav-error');
+    err.textContent = '';
+    err.hidden = true;
+    userDropdown.classList.add('hidden');
+    favModal.classList.add('active');
+    setTimeout(() => document.getElementById('fav-name').focus(), 50);
+}
+function closeFavEdit() {
+    favModal.classList.remove('active');
+    favEditing = null;
+}
+document.getElementById('fav-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const old = favorites.find((x) => x.address === favEditing);
+    if (!old) return closeFavEdit();
+    const address = document.getElementById('fav-address').value.trim();
+    const password = document.getElementById('fav-password').value;
+    const passwordChanged = password !== (savedPasswords()[old.address] || '');
+    const updated = {
+        address,
+        name: document.getElementById('fav-name').value.trim(),
+        nick: document.getElementById('fav-nick').value.trim(),
+        auto: document.getElementById('fav-auto').checked
+    };
+    const at = favorites.indexOf(old);
+    const list = favorites.map((x) => (x === old ? updated : updated.auto ? { ...x, auto: false } : x));
+    if (!(await saveFavorites(list, true))) {
+        const err = document.getElementById('fav-error');
+        err.textContent = "That couldn't be saved. Check the address (e.g. ts.example.com or 203.0.113.7:9987).";
+        err.hidden = false;
+        return;
+    }
+    const saved = favorites.find((x) => x.address === plainAddress(address)) || favorites[at];
+    if (!saved) return closeFavEdit();
+    if (saved.address !== old.address) rememberPassword(old.address, '', false);
+    rememberPassword(saved.address, password, !!password);
+    closeFavEdit();
+    if (everConnected && old.address === currentAddress
+        && (saved.address !== old.address || saved.nick !== (old.nick || '') || passwordChanged)) {
+        connectTo(favoriteChoice(saved));
+    }
+});
+document.getElementById('fav-delete').addEventListener('click', async () => {
+    const address = favEditing;
+    if (!address) return closeFavEdit();
+    if (await saveFavorites(favorites.filter((x) => x.address !== address))) rememberPassword(address, '', false);
+    closeFavEdit();
+});
+document.getElementById('fav-cancel').addEventListener('click', closeFavEdit);
+document.getElementById('fav-close').addEventListener('click', closeFavEdit);
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && favModal.classList.contains('active')) closeFavEdit();
+});
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && connectModal.dataset.closable) closeConnect();
 });
@@ -1345,7 +1427,7 @@ const socket = io(SOCKET_URL, {
         let pick = null;
         try { pick = JSON.parse(sessionStorage.getItem('webts_choice') || 'null'); } catch (e) {}
         const auto = favorites.find((f) => f.auto);
-        if (!pick && auto) pick = { address: auto.address, password: savedPasswords()[auto.address] || '' };
+        if (!pick && auto) pick = favoriteChoice(auto);
         if (pick && pick.address) return startOn(pick);
         if (pick && pick.server && list.some((s) => s.id === pick.server)) return startOn(pick);
         return showConnect(false);

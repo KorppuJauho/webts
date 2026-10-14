@@ -73,12 +73,12 @@ test('TryLimit: at most 10 different servers an hour; the same one again is fine
 
 test('favourites: cleaned, no duplicates, only one connects automatically, never more than the limit', () => {
   assert.deepEqual(cleanFavorites([
-    { address: 'TS.Example.com:9987', name: '  Friends ', auto: true },
+    { address: 'TS.Example.com:9987', name: '  Friends ', nick: ' Jamie ', auto: true },
     { address: 'ts.example.com', name: 'again' },
-    { address: '44.43.32.1:8887', auto: true, password: 'never kept' },
+    { address: '44.43.32.1:8887', auto: true, password: 'never kept', nick: 'x'.repeat(40) },
   ]), [
-    { address: 'ts.example.com', name: 'Friends', auto: true },
-    { address: '44.43.32.1:8887', name: '', auto: false },
+    { address: 'ts.example.com', name: 'Friends', nick: 'Jamie', auto: true },
+    { address: '44.43.32.1:8887', name: '', nick: 'x'.repeat(30), auto: false },
   ]);
   assert.equal(cleanFavorites([{ address: 'not an address!' }]), null);
   assert.equal(cleanFavorites('nope'), null);
@@ -88,10 +88,10 @@ test('favourites: cleaned, no duplicates, only one connects automatically, never
 test('favourites: kept per person in one file', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'webts-fav-'));
   const store = new FavoritesStore(path.join(dir, 'favorites.json'));
-  await store.set('pub:a', [{ address: 'ts.example.com', name: 'A', auto: true }]);
-  await store.set('pub:b', [{ address: '44.43.32.1', name: '', auto: false }]);
-  assert.deepEqual(await store.get('pub:a'), [{ address: 'ts.example.com', name: 'A', auto: true }]);
-  assert.deepEqual(await new FavoritesStore(path.join(dir, 'favorites.json')).get('pub:b'), [{ address: '44.43.32.1', name: '', auto: false }]);
+  await store.set('pub:a', [{ address: 'ts.example.com', name: 'A', nick: 'Jamie', auto: true }]);
+  await store.set('pub:b', [{ address: '44.43.32.1', name: '', nick: '', auto: false }]);
+  assert.deepEqual(await store.get('pub:a'), [{ address: 'ts.example.com', name: 'A', nick: 'Jamie', auto: true }]);
+  assert.deepEqual(await new FavoritesStore(path.join(dir, 'favorites.json')).get('pub:b'), [{ address: '44.43.32.1', name: '', nick: '', auto: false }]);
   await store.set('pub:a', []);
   assert.deepEqual(await store.get('pub:a'), []);
   await fs.rm(dir, { recursive: true, force: true });

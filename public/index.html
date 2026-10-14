@@ -767,6 +767,7 @@
         }
         .fav-btn:hover { background: #35373c; }
         .fav-btn.on { color: #facc15; }
+        .fav-delete { color: #f87171; margin-right: auto; }
         .secondary-btn.testing { border-color: #38bdf8; color: #38bdf8; }
         .key-btn { min-width: 80px; }
         .radio-list { display: flex; flex-direction: column; gap: 6px; }
@@ -1294,6 +1295,39 @@
                 <div id="connect-favorites" class="server-picker-list"></div>
                 <div id="connect-servers" class="server-picker-list"></div>
             </div>
+        </div>
+    </div>
+
+    <!-- Editing a favourite (right-click it, or its ✎) -->
+    <div class="modal-overlay" id="fav-modal">
+        <div class="modal-content connect-content">
+            <div class="modal-header">
+                <h3>Edit favourite</h3>
+                <button class="close-btn" id="fav-close">&times;</button>
+            </div>
+            <form id="fav-form">
+                <div class="modal-body connect-form">
+                    <label class="connect-label">Name in your lists
+                        <input id="fav-name" class="settings-select" maxlength="60" autocomplete="off">
+                    </label>
+                    <label class="connect-label">Server address
+                        <input id="fav-address" class="settings-select" maxlength="260" autocomplete="off" autocapitalize="off" spellcheck="false">
+                    </label>
+                    <label class="connect-label">Your nickname on this server
+                        <input id="fav-nick" class="settings-select" maxlength="30" autocomplete="off">
+                    </label>
+                    <label class="connect-label">Server password (kept in this browser only)
+                        <input id="fav-password" type="password" class="settings-select" maxlength="200" autocomplete="off">
+                    </label>
+                    <label class="connect-check"><input type="checkbox" id="fav-auto"> Connect automatically when WebTS opens</label>
+                    <div id="fav-error" class="connect-error" hidden></div>
+                </div>
+                <div class="modal-footer poke-footer">
+                    <button type="button" class="secondary-btn fav-delete" id="fav-delete">Delete</button>
+                    <button type="button" class="secondary-btn" id="fav-cancel">Cancel</button>
+                    <button type="submit" class="save-btn">Save</button>
+                </div>
+            </form>
         </div>
     </div>
 
