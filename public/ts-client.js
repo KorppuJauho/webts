@@ -751,7 +751,7 @@ let logoutUrl = '';
 // copy is kept per server.
 let chosenServer = '';
 try { chosenServer = new URLSearchParams(location.search).get('server') || localStorage.getItem('webts_server') || ''; } catch (e) {}
-const SERVER_SCOPE = chosenServer ? ':' + chosenServer : '';
+let SERVER_SCOPE = chosenServer ? ':' + chosenServer : '';
 let serverList = [];                    // [{ id, name }], only when there are several
 const serverPicker = document.getElementById('server-picker');
 function showServerPicker(canClose) {
@@ -787,6 +787,207 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && serverPicker.dataset.closable) serverPicker.classList.remove('active');
 });
 document.getElementById('server-switch').addEventListener('click', () => showServerPicker(true));
+
+// ============================================
+// CONNECT ANYWHERE (the bridge's ALLOW_ANY_SERVER)
+// ============================================
+// People type a server's address (and its password, if it has one) in the connect window, or pick a favourite or one of
+// the suggested servers. Favourites are kept by the bridge, so they follow the person to their other devices; one of
+// them (★) is connected to when the page opens. Server passwords stay in this browser: for this tab while it's open, and
+// for good only when "Remember the password" is ticked. This tab's choice survives reloads (sessionStorage).
+let anyServer = false;
+let favorites = [];        // [{ address, name, auto }]
+let connectAuth = {};      // { address, password } for a typed server, sent when connecting (not in the address bar)
+let currentAddress = '';   // the typed server this page is on, as the bridge writes it
+let everConnected = false;
+const connectModal = document.getElementById('connect-modal');
+const connectAddress = document.getElementById('connect-address');
+const connectPassword = document.getElementById('connect-password');
+
+function savedPasswords() {
+    try { return JSON.parse(localStorage.getItem('webts_passwords') || '{}') || {}; } catch (e) { return {}; }
+}
+function rememberPassword(address, password, keep) {
+    const all = savedPasswords();
+    if (keep && password) all[address] = password;
+    else delete all[address];
+    try { localStorage.setItem('webts_passwords', JSON.stringify(all)); } catch (e) {}
+}
+// As the bridge writes addresses: lower case, the default port left out.
+const plainAddress = (a) => String(a || '').trim().toLowerCase().replace(/^(\[[^\]]+\]|[^:]+):9987$/, '$1');
+
+// This tab's chat copy follows the server it's on.
+function useServerScope(scope) {
+    if (scope === SERVER_SCOPE) return;
+    SERVER_SCOPE = scope;
+    try { localChatHistory = JSON.parse(sessionStorage.getItem('ts_chat_history' + scope) || '{}') || {}; } catch (e) { localChatHistory = {}; }
+    try { privateTabs = JSON.parse(sessionStorage.getItem('ts_private_tabs' + scope) || '{}') || {}; } catch (e) { privateTabs = {}; }
+}
+
+// Connect to a typed server ({ address, password }) or a suggested one ({ server }). Already on a server: the page
+// loads again for the new one, so its tree, chat and streams start clean.
+function connectTo(choice) {
+    try { sessionStorage.setItem('webts_choice', JSON.stringify(choice)); } catch (e) {}
+    if (everConnected || socket.connected) {
+        stopMic();
+        socket.disconnect();
+        location.reload();
+        return;
+    }
+    connectModal.classList.remove('active');
+    startOn(choice);
+}
+function startOn(choice) {
+    if (choice.address) {
+        connectAuth = { address: choice.address, password: choice.password || '' };
+        currentAddress = plainAddress(choice.address);
+        useServerScope(':addr:' + currentAddress);
+        socket.io.opts.query = { nick: appSettings.nick };
+    } else {
+        connectAuth = {};
+        currentAddress = '';
+        chosenServer = choice.server;
+        useServerScope(':' + choice.server);
+        socket.io.opts.query = { nick: appSettings.nick, server: choice.server };
+    }
+    socket.connect();
+}
+
+async function loadFavorites() {
+    try {
+        const r = await fetch('/favorites', { credentials: 'same-origin', cache: 'no-store' });
+        if (r.ok) favorites = (await r.json()).favorites || [];
+    } catch (e) {}
+}
+async function saveFavorites(list) {
+    try {
+        const r = await fetch('/favorites', {
+            method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ favorites: list })
+        });
+        if (r.ok) favorites = (await r.json()).favorites || [];
+        else showBanner("The favourites couldn't be saved.", 'error', null, { hideAfterMs: 6000 });
+    } catch (e) {
+        showBanner("The favourites couldn't be saved.", 'error', null, { hideAfterMs: 6000 });
+    }
+    renderServerMenu();
+    renderConnectLists();
+}
+
+function showConnect(canClose, error, address) {
+    document.getElementById('connect-close').hidden = !canClose;
+    connectModal.dataset.closable = canClose ? '1' : '';
+    const err = document.getElementById('connect-error');
+    err.textContent = error || '';
+    err.hidden = !error;
+    if (address !== undefined) connectAddress.value = address;
+    const known = savedPasswords()[plainAddress(connectAddress.value)];
+    connectPassword.value = known || (address && connectAuth.address === address ? connectAuth.password || '' : '');
+    document.getElementById('connect-remember').checked = !!known;
+    document.getElementById('connect-favorite').checked = false;
+    document.getElementById('connect-favorite-row').hidden = favorites.some((f) => f.address === plainAddress(connectAddress.value));
+    renderConnectLists();
+    if (!canClose && !everConnected) { // not on any server yet: say so, not "Connecting..."
+        hideBanner();
+        tsContent.innerHTML = '<div class="ts-loading">Choose a server</div>';
+    }
+    connectModal.classList.add('active');
+    setTimeout(() => connectAddress.focus(), 50);
+}
+function closeConnect() { connectModal.classList.remove('active'); }
+
+function renderConnectLists() {
+    const favEl = document.getElementById('connect-favorites');
+    favEl.innerHTML = '';
+    if (favorites.length) {
+        const h = document.createElement('div');
+        h.className = 'connect-heading';
+        h.textContent = 'Favourites';
+        favEl.appendChild(h);
+    }
+    favorites.forEach((f) => {
+        const row = document.createElement('div');
+        row.className = 'fav-row';
+        const go = document.createElement('button');
+        go.type = 'button';
+        go.className = 'server-choice' + (f.address === currentAddress && everConnected ? ' current' : '');
+        go.textContent = f.name || f.address;
+        go.title = f.address;
+        go.addEventListener('click', () => connectTo({ address: f.address, password: savedPasswords()[f.address] || '' }));
+        const star = document.createElement('button');
+        star.type = 'button';
+        star.className = 'fav-btn' + (f.auto ? ' on' : '');
+        star.textContent = f.auto ? '★' : '☆';
+        star.title = f.auto ? 'Connects automatically when WebTS opens (click to stop)' : 'Connect to this one automatically when WebTS opens';
+        star.addEventListener('click', () => saveFavorites(favorites.map((x) => ({ ...x, auto: x.address === f.address ? !f.auto : false }))));
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'fav-btn';
+        remove.textContent = '×';
+        remove.title = 'Remove from favourites';
+        remove.addEventListener('click', () => saveFavorites(favorites.filter((x) => x.address !== f.address)));
+        row.append(go, star, remove);
+        favEl.appendChild(row);
+    });
+    const srvEl = document.getElementById('connect-servers');
+    srvEl.innerHTML = '';
+    if (serverList.length) {
+        const h = document.createElement('div');
+        h.className = 'connect-heading';
+        h.textContent = 'Servers';
+        srvEl.appendChild(h);
+    }
+    serverList.forEach((s) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'server-choice' + (!currentAddress && s.id === chosenServer && everConnected ? ' current' : '');
+        b.textContent = s.name;
+        b.addEventListener('click', () => connectTo({ server: s.id }));
+        srvEl.appendChild(b);
+    });
+}
+
+// The menu: the favourites (one click connects), "Connect to...", and adding the server you're on.
+function renderServerMenu() {
+    const box = document.getElementById('menu-servers');
+    box.innerHTML = '';
+    if (!anyServer) return;
+    const item = (text, onClick, title) => {
+        const b = document.createElement('button');
+        b.className = 'ts-dropdown-item';
+        b.textContent = text;
+        if (title) b.title = title;
+        b.addEventListener('click', onClick);
+        box.appendChild(b);
+    };
+    favorites.forEach((f) => item((f.address === currentAddress ? '● ' : '★ ') + (f.name || f.address),
+        () => connectTo({ address: f.address, password: savedPasswords()[f.address] || '' }), f.address));
+    item('Connect to...', () => showConnect(true, '', ''));
+    if (currentAddress && everConnected && !favorites.some((f) => f.address === currentAddress)) {
+        item('☆ Add to favourites', () => saveFavorites([...favorites, { address: currentAddress, name: '', auto: false }]));
+    }
+}
+
+document.getElementById('connect-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const address = connectAddress.value.trim();
+    if (!address) return connectAddress.focus();
+    const password = connectPassword.value;
+    rememberPassword(plainAddress(address), password, document.getElementById('connect-remember').checked);
+    if (document.getElementById('connect-favorite').checked && !favorites.some((f) => f.address === plainAddress(address))) {
+        await saveFavorites([...favorites, { address, name: '', auto: false }]);
+    }
+    connectTo({ address, password });
+});
+connectAddress.addEventListener('input', () => {
+    const known = savedPasswords()[plainAddress(connectAddress.value)];
+    if (known) { connectPassword.value = known; document.getElementById('connect-remember').checked = true; }
+    document.getElementById('connect-favorite-row').hidden = favorites.some((f) => f.address === plainAddress(connectAddress.value));
+});
+document.getElementById('connect-close').addEventListener('click', closeConnect);
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && connectModal.dataset.closable) closeConnect();
+});
 document.getElementById('logout-btn').addEventListener('click', () => {
     if (!logoutUrl) return;
     stopMic();
@@ -1123,25 +1324,44 @@ const socket = io(SOCKET_URL, {
     withCredentials: true,
     transports: ['websocket', 'polling'],
     query: { nick: appSettings.nick, server: chosenServer },
+    auth: (send) => send(connectAuth), // a typed server's address and password (connect anywhere)
     autoConnect: false // first the server list (startConnection)
 });
 
 // With several servers and none picked yet (or one that's no longer offered): the list first.
 (async function startConnection() {
+    let info = {};
     try {
         const r = await fetch('/servers', { credentials: 'same-origin', cache: 'no-store' });
-        if (r.ok) {
-            const list = ((await r.json()).servers || []).filter((s) => s && typeof s.id === 'string' && typeof s.name === 'string');
-            if (list.length > 1) serverList = list;
-        }
+        if (r.ok) info = await r.json();
     } catch (e) {}
+    const list = (info.servers || []).filter((s) => s && typeof s.id === 'string' && typeof s.name === 'string');
+    anyServer = info.anyServer === true;
+    if (anyServer) {
+        // This tab's server (a reload), else the favourite marked ★, else the connect window.
+        serverList = list;
+        await loadFavorites();
+        renderServerMenu();
+        let pick = null;
+        try { pick = JSON.parse(sessionStorage.getItem('webts_choice') || 'null'); } catch (e) {}
+        const auto = favorites.find((f) => f.auto);
+        if (!pick && auto) pick = { address: auto.address, password: savedPasswords()[auto.address] || '' };
+        if (pick && pick.address) return startOn(pick);
+        if (pick && pick.server && list.some((s) => s.id === pick.server)) return startOn(pick);
+        return showConnect(false);
+    }
+    if (list.length > 1) serverList = list;
     if (serverList.length > 1 && !serverList.some((s) => s.id === chosenServer)) return showServerPicker(false);
     socket.connect();
 })();
 socket.on('connect_error', (err) => {
-    if (err && err.message === 'Unknown server' && serverList.length > 1) {
+    const message = (err && err.message) || '';
+    if (message === 'Unknown server' && serverList.length > 1) {
         socket.disconnect();
         showServerPicker(false);
+    } else if (message.startsWith('Server: ')) {
+        socket.disconnect();
+        showConnect(everConnected, message.slice(8), connectAuth.address || '');
     }
 });
 
@@ -1166,8 +1386,11 @@ socket.on('webts-config', (cfg) => {
     }
     show(back, hasBack);
     if (Array.isArray(cfg.servers) && cfg.servers.length > 1) serverList = cfg.servers;
-    show(document.getElementById('server-switch'), serverList.length > 1);
-    show(document.getElementById('user-menu-btn'), hasBack || !!logoutUrl || serverList.length > 1);
+    anyServer = cfg.anyServer === true;
+    if (anyServer && typeof cfg.server === 'string' && cfg.server.startsWith('addr:')) currentAddress = cfg.server.slice(5);
+    show(document.getElementById('server-switch'), !anyServer && serverList.length > 1);
+    show(document.getElementById('user-menu-btn'), hasBack || !!logoutUrl || serverList.length > 1 || anyServer);
+    renderServerMenu();
     picturesEnabled = cfg.picturesEnabled !== false;
     if (Number(cfg.pictureMaxMb) > 0) PICTURE_MAX_BYTES = Number(cfg.pictureMaxMb) * 1024 * 1024;
     updatePictureButton();
@@ -1251,9 +1474,12 @@ document.getElementById('media-volume-note').classList.toggle('hidden', !needsMe
 socket.on('ts-error', (data) => {
     console.warn('[TeamSpeak]', data && data.message);
     showBanner((data && data.message) || "Couldn't connect to the TeamSpeak server.", 'error');
+    // A typed server that refused (wrong password, not reachable...): the connect window, to fix it or pick another.
+    if (anyServer && connectAuth.address) showConnect(true, (data && data.message) || '', connectAuth.address);
 });
 
 socket.on('connect', () => {
+    everConnected = true;
     console.log("[WebSocket] Connected!");
     replacedElsewhere = false;
     showBanner("Connected!", 'success');

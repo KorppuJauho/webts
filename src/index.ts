@@ -18,12 +18,22 @@ import { channelLabel, enterEvent, moveEvent, leaveEvent, type EventPart } from 
 import { ChatHistoryStore } from './chat-history.js';
 import { config } from './config.js';
 import { pickServer, publicServer, type TsServer } from './servers.js';
+import { resolveServer, ServerAddressError, TryLimit, type AllowList } from './any-server.js';
+import { cleanFavorites, FavoritesStore } from './favorites.js';
 import { createAccess, Person } from './access.js';
 
 // --- CONFIGURATION ---
 const access = createAccess(config);
-// The servers people can use: one from the TS_* settings, or several from servers.json (src/servers.ts).
-const SERVERS = config.servers;
+// The servers people can use: one from the TS_* settings, or several from servers.json (src/servers.ts). With
+// "connect anywhere" (ALLOW_ANY_SERVER) people may also type any address (src/any-server.ts); then only servers listed on
+// purpose are offered as suggestions.
+const ANY_SERVER = config.allowAnyServer;
+const SERVERS = ANY_SERVER && !config.serversListed ? [] : config.servers;
+// Private addresses that may be reached anyway: ALLOW_SERVERS, and the listed servers' own names.
+const ALLOW: AllowList = config.allowServers;
+for (const s of SERVERS) ALLOW.names.add(s.host.toLowerCase());
+const serverTries = new TryLimit(config.anyServerTries);
+const favorites = new FavoritesStore(path.join(config.dataDir, 'favorites.json'));
 // Where the bytes of a server's files go: its address, and its file port when set (else the port the server names).
 const fileTarget = (s: TsServer) => ({ host: s.host, port: s.filePort });
 const DATA_DIR = config.dataDir;
@@ -132,10 +142,31 @@ app.get(['/', '/index.html'], async (req, res) => {
     res.set({ 'Content-Security-Policy': PAGE_CSP, 'Cache-Control': 'no-store', 'X-Frame-Options': 'SAMEORIGIN' });
     res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
 });
-// The servers to choose from, for the page's list before it connects: ids and names only.
+// The servers to choose from, for the page's list before it connects: ids and names only; and whether any address may
+// be typed.
 app.get('/servers', async (req, res) => {
     if (!(await access.identify(req))) return res.status(401).end();
-    res.set('Cache-Control', 'no-store').json({ servers: SERVERS.map(publicServer) });
+    res.set('Cache-Control', 'no-store').json({ servers: SERVERS.map(publicServer), anyServer: ANY_SERVER });
+});
+
+// The person's favourite servers ("connect anywhere" only): read, and saved as a whole list.
+app.get('/favorites', async (req, res) => {
+    const person = ANY_SERVER ? await access.identify(req) : null;
+    if (!person) return res.status(404).end();
+    res.set('Cache-Control', 'no-store').json({ favorites: await favorites.get(person.key) });
+});
+app.put('/favorites', express.json({ limit: '16kb' }), async (req, res) => {
+    const person = ANY_SERVER && originAllowed(req) ? await access.identify(req) : null;
+    if (!person) return res.status(404).end();
+    const list = cleanFavorites(req.body && req.body.favorites);
+    if (!list) return res.status(400).json({ error: 'Not a list of favourites' });
+    try {
+        await favorites.set(person.key, list);
+    } catch (e: any) {
+        console.error(`[Favorites] Couldn't save for ${person.key}: ${e.code || e.message}`);
+        return res.status(500).json({ error: "The favourites couldn't be saved" });
+    }
+    res.json({ favorites: list });
 });
 // Revalidated on every load (ETag), so an update reaches everyone at once.
 app.use(express.static(PUBLIC_DIR, { index: false, maxAge: 0 }));
@@ -303,9 +334,26 @@ io.use(async (socket, next) => {
         console.warn(`[Access] Connection refused: not signed in (${access.mode}).`);
         return next(new Error('Access denied'));
     }
-    // The server the page picked: one of the list, never anything else (with one server the page needn't say).
-    const tsServer = pickServer(SERVERS, socket.handshake.query.server);
-    if (!tsServer) return next(new Error('Unknown server'));
+    // The server the page picked: one of the list, never anything else (with one server the page needn't say); or,
+    // with "connect anywhere", a typed address, looked up and checked (any-server.ts). Its errors start with "Server: ",
+    // which the page shows in its connect window.
+    const auth = (socket.handshake.auth || {}) as { address?: unknown; password?: unknown };
+    let tsServer: TsServer | null;
+    if (ANY_SERVER && typeof auth.address === 'string' && auth.address.trim()) {
+        try {
+            tsServer = await resolveServer(auth.address, ALLOW);
+        } catch (e: any) {
+            return next(new Error(`Server: ${e instanceof ServerAddressError ? e.message : "That server can't be reached."}`));
+        }
+        if (!serverTries.allow(person.key, tsServer.id)) {
+            return next(new Error(`Server: You've tried ${config.anyServerTries} different servers in the last hour. Please wait a while.`));
+        }
+        if (typeof auth.password === 'string' && auth.password) tsServer.password = auth.password.slice(0, 200);
+        console.log(`[Servers] ${person.key} -> ${tsServer.name} (${tsServer.host}:${tsServer.port})`);
+    } else {
+        tsServer = SERVERS.length ? pickServer(SERVERS, socket.handshake.query.server) : null;
+        if (!tsServer) return next(new Error(ANY_SERVER ? 'Server: Choose a server.' : 'Unknown server'));
+    }
     (socket as any).tsServer = tsServer;
     if (activeBots.size >= config.maxUsers && !sessionByKey.has(person.key)) {
         console.warn(`[Access] Connection refused: MAX_USERS (${config.maxUsers}) reached.`);
@@ -770,9 +818,11 @@ io.on('connection', async (socket) => {
         backLabel: config.backLabel,
         picturesEnabled: config.picturesEnabled,
         pictureMaxMb: config.pictureMaxMb,
-        // The server list (only when there are several) and the one this connection is on.
-        servers: SERVERS.length > 1 ? SERVERS.map(publicServer) : [],
-        server: tsServer.id
+        // The server list (only when there are several, or with "connect anywhere") and the one this connection is on.
+        servers: SERVERS.length > 1 || ANY_SERVER ? SERVERS.map(publicServer) : [],
+        server: tsServer.id,
+        serverName: tsServer.name,
+        anyServer: ANY_SERVER
     });
 
     // Cleanup is registered first: a page closed while its bot is still connecting must not leave the bot
@@ -2268,5 +2318,9 @@ if (relay.coturn) {
 }
 
 server.listen(PORT, () => {
-    console.log(`[Server] WebTS running on port ${PORT} (access: ${access.mode}; TeamSpeak ${SERVERS.map((s) => `${s.id}=${s.host}:${s.port}${s.filePort ? ` files:${s.filePort}` : ''}`).join(', ')})`);
+    console.log(`[Server] WebTS running on port ${PORT} (access: ${access.mode}; TeamSpeak ${SERVERS.map((s) => `${s.id}=${s.host}:${s.port}${s.filePort ? ` files:${s.filePort}` : ''}`).join(', ') || 'none listed'}${ANY_SERVER ? '; any server may be typed' : ''})`);
+    if (ANY_SERVER) {
+        console.log(`[Servers] Connect anywhere is on: at most ${config.anyServerTries} different servers per person per hour; private addresses refused${ALLOW.size ? ` except ALLOW_SERVERS (${ALLOW.size})` : ''}.`);
+        if (access.mode === 'public') console.warn('[Servers] WARNING: ACCESS_MODE=public with ALLOW_ANY_SERVER: anyone who finds this page can make it connect to any TeamSpeak server, and every connection comes from this machine\'s address.');
+    }
 });

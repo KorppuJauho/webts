@@ -751,6 +751,22 @@
         .server-choice:hover { background: #35373c; }
         .server-choice.current { border-color: #3b82f6; }
         .server-choice.current::after { content: ' (connected)'; color: #80848e; font-weight: 400; }
+        .connect-content .modal-body { overflow-y: auto; max-height: 75vh; gap: 16px; }
+        .connect-form { display: flex; flex-direction: column; gap: 10px; }
+        .connect-label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: #b5bac1; }
+        .connect-check { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #b5bac1; cursor: pointer; }
+        .connect-check[hidden] { display: none; }
+        .connect-error { color: #f87171; font-size: 0.85rem; }
+        .connect-heading { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: #80848e; letter-spacing: 0.04em; }
+        .server-picker-list { display: flex; flex-direction: column; }
+        .fav-row { display: flex; gap: 6px; }
+        .fav-row .server-choice { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .fav-btn {
+            background: #1e1f22; color: #b5bac1; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
+            width: 40px; cursor: pointer; font-size: 1rem;
+        }
+        .fav-btn:hover { background: #35373c; }
+        .fav-btn.on { color: #facc15; }
         .secondary-btn.testing { border-color: #38bdf8; color: #38bdf8; }
         .key-btn { min-width: 80px; }
         .radio-list { display: flex; flex-direction: column; gap: 6px; }
@@ -1058,6 +1074,7 @@
         </button>
         <div id="user-dropdown" class="ts-dropdown hidden">
             <!-- Shown only when the bridge has BACK_URL / LOGOUT_URL (webts-config) -->
+            <div id="menu-servers"></div>
             <button id="server-switch" class="ts-dropdown-item" hidden>Change server</button>
             <a id="back-link" href="#" class="ts-dropdown-item" style="text-decoration: none;" hidden>Back</a>
             <button id="logout-btn" class="ts-dropdown-item text-red" hidden>Sign out</button>
@@ -1251,6 +1268,32 @@
                 <button class="close-btn" id="server-picker-close" hidden>&times;</button>
             </div>
             <div class="modal-body server-picker-list" id="server-picker-list"></div>
+        </div>
+    </div>
+
+    <!-- Connect anywhere: an address, favourites (★ = connect when WebTS opens) and the suggested servers -->
+    <div class="modal-overlay" id="connect-modal">
+        <div class="modal-content connect-content">
+            <div class="modal-header">
+                <h3>Connect to a server</h3>
+                <button class="close-btn" id="connect-close" hidden>&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="connect-form" class="connect-form">
+                    <label class="connect-label">Server address
+                        <input id="connect-address" class="settings-select" placeholder="ts.example.com or 203.0.113.7:9987" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="260">
+                    </label>
+                    <label class="connect-label">Server password (only if it has one)
+                        <input id="connect-password" type="password" class="settings-select" autocomplete="off" maxlength="200">
+                    </label>
+                    <label class="connect-check"><input type="checkbox" id="connect-remember"> Remember the password in this browser</label>
+                    <label class="connect-check" id="connect-favorite-row"><input type="checkbox" id="connect-favorite"> Save to favourites</label>
+                    <div id="connect-error" class="connect-error" hidden></div>
+                    <button type="submit" class="save-btn">Connect</button>
+                </form>
+                <div id="connect-favorites" class="server-picker-list"></div>
+                <div id="connect-servers" class="server-picker-list"></div>
+            </div>
         </div>
     </div>
 

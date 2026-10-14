@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 import { parseHistoryKey } from "./chat-history.js";
 import { parseServers, serverFromSettings, type TsServer } from "./servers.js";
+import { parseAllowList, type AllowList } from "./any-server.js";
 
 export type AccessMode = "cloudflare-access" | "header" | "public" | "signed-note";
 
@@ -82,6 +83,10 @@ function readConfig() {
     chatHistoryDays: number("CHAT_HISTORY_DAYS", 30, 1, 3650),
     chatHistoryLines: number("CHAT_HISTORY_LINES", 300, 10, 5000),
 
+    // "Connect anywhere" (README: "Connect anywhere"): people may type any server's address. Off unless set.
+    allowAnyServer: flag("ALLOW_ANY_SERVER", false),
+    anyServerTries: number("ANY_SERVER_TRIES", 10, 1, 1000), // different servers per person per hour
+
     // The optional relay for people whose network blocks direct connections
     turnUrls: env("TURN_URLS").split(",").map((u) => u.trim()).filter(Boolean),
     turnSecret: env("TURN_SECRET"),
@@ -108,12 +113,20 @@ function readConfig() {
     fail("CHAT_HISTORY=on needs CHAT_HISTORY_KEY: 32 random bytes as base64, e.g. from: node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"");
   }
   if (config.turnUrls.length && !config.turnSecret) fail("TURN_URLS needs TURN_SECRET (the static-auth-secret of your coturn server)");
-  return { ...config, servers: readServers(config) };
+  let allowServers: AllowList;
+  try {
+    allowServers = parseAllowList(env("ALLOW_SERVERS"));
+  } catch (e: any) {
+    fail(e.message);
+  }
+  const { servers, listed } = readServers(config);
+  return { ...config, servers, serversListed: listed, allowServers };
 }
 
 // The servers people can use (README: "Several servers"): servers.json when there is one (SERVERS_FILE, default
 // ./servers.json), else the single server of the TS_* settings.
-function readServers(c: { tsHost: string; tsPort: number; tsFilePort: number; tsServerPassword?: string; tsDefaultChannel?: string }): TsServer[] {
+// `listed`: servers.json, or TS_HOST set on purpose (with "connect anywhere", only those are offered as suggestions).
+function readServers(c: { tsHost: string; tsPort: number; tsFilePort: number; tsServerPassword?: string; tsDefaultChannel?: string }): { servers: TsServer[]; listed: boolean } {
   const asked = env("SERVERS_FILE");
   const file = path.resolve(asked || "servers.json");
   let text: string | null = null;
@@ -123,11 +136,11 @@ function readServers(c: { tsHost: string; tsPort: number; tsFilePort: number; ts
     if (asked || e.code !== "ENOENT") fail(`SERVERS_FILE ${file} can't be read (${e.code || e.message})`);
   }
   if (text === null) {
-    return [serverFromSettings({ host: c.tsHost, port: c.tsPort, filePort: c.tsFilePort,
-      password: c.tsServerPassword, defaultChannel: c.tsDefaultChannel })];
+    return { servers: [serverFromSettings({ host: c.tsHost, port: c.tsPort, filePort: c.tsFilePort,
+      password: c.tsServerPassword, defaultChannel: c.tsDefaultChannel })], listed: !!env("TS_HOST") };
   }
   try {
-    return parseServers(text);
+    return { servers: parseServers(text), listed: true };
   } catch (e: any) {
     fail(e.message);
   }

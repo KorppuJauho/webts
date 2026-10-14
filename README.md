@@ -138,6 +138,27 @@ server" in the menu. List them in `servers.json` (copy `servers.example.json`; w
   server; give the server you started with the id `main` to keep its history from before.
 - `servers.json` can hold server passwords: keep it out of git and readable only by you.
 
+## Connect anywhere (optional)
+
+With `ALLOW_ANY_SERVER=on`, people can type any TeamSpeak server's address: `ts.example.com`, `203.0.113.7:9987`
+or `[2001:db8::1]:9987`. A name without a port is looked up like the TeamSpeak app does (its `_ts3._udp` record
+first). They can save servers as favourites (kept by WebTS, so they follow them to their other devices) and mark one
+with ★ to connect to it when WebTS opens; the menu lists the favourites and "Connect to...". Servers you list
+(`servers.json`, or `TS_HOST` when set) are shown as suggestions.
+
+**Think before switching it on.** Every connection comes from your machine's address: whatever people do on other
+servers, those servers see you.
+- **Private and reserved addresses are refused** (this machine, your home network, carrier NAT, link-local,
+  multicast...), checked after the name is looked up, so a name can't lead there. Allow your own LAN server on purpose
+  with `ALLOW_SERVERS` (addresses, ranges like `10.0.0.0/8`, or names).
+- **At most `ANY_SERVER_TRIES` (10) different servers per person per hour**, and one connection per person as always.
+- **With `ACCESS_MODE=public` anyone on the internet can use it** to connect anywhere from your address. WebTS
+  allows it and says so in its log; a sign-in in front (README: "Access") is much safer.
+- **Server passwords are never kept by WebTS:** they're sent when connecting, and the page keeps one only in that
+  browser, and only when "Remember the password" is ticked. Favourites hold addresses and names only.
+- WebTS's log notes who connects to which address (`[Servers]` lines).
+- Some servers require a stronger identity ("security level") than WebTS's; those refuse the connection.
+
 ## Known limitations
 
 - **Watching streams in Firefox doesn't work:** the TeamSpeak 6 app never completes the connection to Firefox (it
