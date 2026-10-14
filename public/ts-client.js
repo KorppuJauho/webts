@@ -1854,7 +1854,14 @@ function avatarHtml(person, cls) {
     if (!person || !person.uid || !person.avatar) return '';
     const params = `uid=${encodeURIComponent(person.uid)}&v=${encodeURIComponent(person.avatar)}`
         + (person.avatarName ? `&name=${encodeURIComponent(person.avatarName)}` : '');
-    return `<img class="${cls}" src="/avatar?${escapeHtml(params)}" alt="" onerror="this.remove()">`;
+    return `<img class="${cls}" src="/avatar?${escapeHtml(params)}" alt="" onerror="retryAvatar(this)">`;
+}
+
+// Once more after 2 s (the connection may have been a moment late), then left out.
+function retryAvatar(img) {
+    if (img.dataset.tried) return img.remove();
+    img.dataset.tried = '1';
+    setTimeout(() => { img.src += '&try=1'; }, 2000);
 }
 
 function retryChannelPicture(img) {

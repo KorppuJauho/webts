@@ -510,16 +510,17 @@ function waitForBotGone(bot: Ts3Client, ms: number): Promise<void> {
 // their TeamSpeak permissions allow.
 const PICTURE_SERVE_MAX = IMAGE_MAX_BYTES + 1024 * 1024; // 16 MB: also pictures the TeamSpeak app put there
 const pictureCache = new PictureCache();
-const transferQueues = new WeakMap<Ts3Client, Promise<unknown>>(); // one transfer at a time per connection
 const pictureFetches = new Map<string, Promise<Buffer>>();         // the same picture asked for twice at once
 
 // --- PACING ---
 // The TeamSpeak server counts commands per connection and per address, and every WebTS user shares the bridge's
 // address. Too many at once and it answers "client is flooding" (524) and ignores them; more, and it bans the address
 // for a while (3329), which shuts out every WebTS user. Sent in one burst right after connecting, the channel
-// subscriptions were ignored and nobody in other channels was visible. So the commands sent in bulk (the start-up lists, channel subscriptions, file transfers) leave one at a
+// subscriptions were ignored and nobody in other channels was visible. So the commands sent in bulk (the start-up lists, channel subscriptions, stream info requests) leave one at a
 // time, PACE_MS apart, for all connections together. What a person does (chat, moving, muting) still goes at once.
-const PACE_MS = 250;
+// Measured on a TeamSpeak 6 test server (2026-10-14): 18 of these commands at once passed, 36 at once got 9 refused;
+// 100 ms apart is well inside that. (It was 250 ms, which made opening the page slow.)
+const PACE_MS = 100;
 let paceChain: Promise<void> = Promise.resolve();
 function paced(work: () => void): Promise<void> {
     const run = paceChain.then(() => {
@@ -534,11 +535,24 @@ function sendPaced(bot: Ts3Client, cmd: string): Promise<void> {
     });
 }
 
+// File transfers (pictures, icons, avatars) don't count towards the flood limit: on the same test server 300 requests
+// at once were all accepted. So they skip the pacing, and a few run side by side per connection (they used to go one
+// at a time, which made a page full of avatars and pictures fill in one by one).
+const TRANSFERS_AT_ONCE = 4;
+const transferSlots = new WeakMap<Ts3Client, { running: number; waiting: (() => void)[] }>();
 function queueTransfer<T>(bot: Ts3Client, work: () => Promise<T>): Promise<T> {
-    // Each transfer starts with a command (ftinitdownload/-upload), so it waits for its turn in the pacing too.
-    const run = (transferQueues.get(bot) || Promise.resolve()).then(() => paced(() => {})).then(work);
-    transferQueues.set(bot, run.catch(() => {}));
-    return run;
+    let slots = transferSlots.get(bot);
+    if (!slots) transferSlots.set(bot, slots = { running: 0, waiting: [] });
+    const s = slots;
+    const turn = new Promise<void>((resolve) => {
+        if (s.running < TRANSFERS_AT_ONCE) { s.running++; resolve(); }
+        else s.waiting.push(resolve); // the slot is handed over when one finishes
+    });
+    return turn.then(work).finally(() => {
+        const next = s.waiting.shift();
+        if (next) next();
+        else s.running--;
+    });
 }
 
 function fetchPicture(personKey: string, bot: Ts3Client, cid: number, fullPath: string): Promise<Buffer> {
@@ -572,7 +586,7 @@ app.get('/channel-image', async (req, res) => {
     const ref = channelImageRef(req.query as Record<string, unknown>);
     if (!ref) return res.status(404).end();
     // Only while the person is on the server (the page tries again once it has connected).
-    const bot = sessionBot(person.key);
+    const bot = await waitForSessionBot(person.key);
     if (!bot) return res.status(503).set('Retry-After', '3').end();
     try {
         const data = await fetchPicture(person.key, bot, ref.cid, ref.fullPath);
@@ -606,6 +620,17 @@ function sessionBot(personKey: string): Ts3Client | null {
     const session = sessionByKey.get(personKey);
     const bot = session ? activeBots.get(session.id) : undefined;
     return bot && bot.getState() === 'connected' ? bot : null;
+}
+
+// Right after the page opens, it asks for pictures and icons before the person's TeamSpeak connection is up. Instead of
+// "try again later", wait for the connection a little, so they come as soon as it is.
+async function waitForSessionBot(personKey: string, ms = 10_000): Promise<Ts3Client | null> {
+    const until = Date.now() + ms;
+    for (;;) {
+        const bot = sessionBot(personKey);
+        if (bot || Date.now() >= until) return bot;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+    }
 }
 
 async function fetchServerFile(bot: Ts3Client, name: string, maxBytes: number): Promise<Buffer | null> {
@@ -646,7 +671,7 @@ app.get('/server-icon', async (req, res) => {
     if (!person) return res.status(403).end();
     const name = iconFileName(Number(req.query.id));
     if (!name) return res.status(404).end();
-    const bot = sessionBot(person.key);
+    const bot = await waitForSessionBot(person.key);
     if (!bot) return res.status(503).set('Retry-After', '3').end();
     const data = await fetchServerFile(bot, name, ICON_MAX_BYTES);
     if (!data) return res.status(404).end();
@@ -661,7 +686,7 @@ app.get('/avatar', async (req, res) => {
     const known = avatarFound.get(uid);
     const names = known ? [known] : avatarFileNames(uid, serverName);
     if (!names.length) return res.status(404).end();
-    const bot = sessionBot(person.key);
+    const bot = await waitForSessionBot(person.key);
     if (!bot) return res.status(503).set('Retry-After', '3').end();
     for (const [i, name] of names.entries()) {
         const data = await fetchServerFile(bot, name, AVATAR_MAX_BYTES);
