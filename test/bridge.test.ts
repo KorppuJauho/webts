@@ -93,6 +93,18 @@ test('download: the file\'s bytes; a file over the limit is stopped before readi
   s.close();
 });
 
+test('TS_FILE_PORT: the bytes go to the port WebTS was given, not the one the server names', async () => {
+  const file = Buffer.alloc(5000, 3);
+  // The server names its own port (here a wrong one, as when Docker publishes 30033 as another number).
+  const s = await fakeServer((cmd) => cmd.name === 'ftinitdownload'
+    ? [`notifystartdownload clientftfid=${cmd.params.clientftfid} serverftfid=9 ftkey=downkey1 port=1 size=${file.length}`]
+    : []);
+  s.setDownload(file);
+  const got = await downloadFile(s.client, { host: '127.0.0.1', port: s.port }, 1, '/webTS/x.jpg', 1000000);
+  assert.ok(got.equals(file));
+  s.close();
+});
+
 test('a status refusal (e.g. file not found) for this transfer ends it', async () => {
   const s = await fakeServer((cmd) => [`notifystatusfiletransfer clientftfid=${cmd.params.clientftfid} status=2051 msg=file\\snot\\sfound`]);
   await assert.rejects(downloadFile(s.client, '127.0.0.1', 1, '/nope.jpg', 1000), (e: any) => e.code === 2051);

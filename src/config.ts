@@ -40,6 +40,8 @@ function readConfig() {
     // The TeamSpeak server
     tsHost: env("TS_HOST") || "127.0.0.1",
     tsPort: number("TS_PORT", 9987, 1, 65535),
+    // The file transfer port, only if WebTS must reach it under another number than the server's own (0 = the server's).
+    tsFilePort: env("TS_FILE_PORT") ? number("TS_FILE_PORT", 30033, 1, 65535) : 0,
     tsServerPassword: env("TS_SERVER_PASSWORD") || undefined,
     tsDefaultChannel: env("TS_DEFAULT_CHANNEL") || undefined,
     nickPrefix: process.env.NICK_PREFIX ?? "Web - ",

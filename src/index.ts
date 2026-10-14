@@ -22,6 +22,8 @@ import { createAccess, Person } from './access.js';
 // --- CONFIGURATION ---
 const access = createAccess(config);
 const TS_HOST = config.tsHost;
+// Pictures, icons and avatars: the server's address, and TS_FILE_PORT when set (else the port the server names).
+const FILE_TARGET = { host: TS_HOST, port: config.tsFilePort || undefined };
 const DATA_DIR = config.dataDir;
 const IDENTITIES_FILE = path.join(DATA_DIR, 'identities.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
@@ -584,7 +586,7 @@ function fetchPicture(personKey: string, bot: Ts3Client, cid: number, fullPath: 
     if (cached) return Promise.resolve(cached);
     const running = pictureFetches.get(key);
     if (running) return running;
-    const fetching = queueTransfer(bot, () => downloadFile(bot, TS_HOST, cid, fullPath, PICTURE_SERVE_MAX))
+    const fetching = queueTransfer(bot, () => downloadFile(bot, FILE_TARGET, cid, fullPath, PICTURE_SERVE_MAX))
         .then((data) => {
             pictureCache.set(key, data);
             return data;
@@ -661,7 +663,7 @@ async function fetchServerFile(bot: Ts3Client, name: string, maxBytes: number): 
     if (cached) return cached;
     if ((iconMissing.get(name) || 0) > Date.now()) return null;
     try {
-        const data = await queueTransfer(bot, () => downloadFile(bot, TS_HOST, 0, name, maxBytes));
+        const data = await queueTransfer(bot, () => downloadFile(bot, FILE_TARGET, 0, name, maxBytes));
         iconCache.set(name, data);
         return data;
     } catch (e: any) {
@@ -1949,7 +1951,7 @@ io.on('connection', async (socket) => {
                 // A folder that's there already is fine; without the right to make one, the upload says what's wrong.
                 await createDirectory(bot, cid, IMAGE_FOLDER).catch((e: any) =>
                     console.log(`[Pictures] ${botNickname}: no ${IMAGE_FOLDER} folder made in channel ${cid}: ${e.message} (${e.code})`));
-                await uploadFile(bot, TS_HOST, cid, `${IMAGE_FOLDER}/${name}`, data);
+                await uploadFile(bot, FILE_TARGET, cid, `${IMAGE_FOLDER}/${name}`, data);
             });
             console.log(`[Pictures] ${botNickname} shared ${name} (${(data.length / 1048576).toFixed(1)} MB) in channel ${cid}`);
             bot.sendCommand(buildCommand('sendtextmessage', { targetmode: 2, target: cid, msg: pictureMessage(name, cid, IMAGE_FOLDER) }));
@@ -2241,5 +2243,5 @@ if (relay.coturn) {
 }
 
 server.listen(PORT, () => {
-    console.log(`[Server] WebTS running on port ${PORT} (access: ${access.mode}; TeamSpeak server ${TS_HOST}:${config.tsPort})`);
+    console.log(`[Server] WebTS running on port ${PORT} (access: ${access.mode}; TeamSpeak server ${TS_HOST}:${config.tsPort}${config.tsFilePort ? `, files on port ${config.tsFilePort}` : ''})`);
 });

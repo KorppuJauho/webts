@@ -89,6 +89,10 @@ The TeamSpeak apps fetch pictures from the server's file transfer port, which th
 own port). If you publish the server's port 30033 under another number (e.g. Docker `30035:30033`), the apps get no
 answer and show pictures as empty boxes, while WebTS still shows them. Publish it as the same number.
 
+WebTS itself follows the same port, unless it is told otherwise: if it reaches the server from outside the server's
+Docker network and the file port is published under another number, set `TS_FILE_PORT` to that number (e.g. `30035`).
+That fixes WebTS only; the TeamSpeak apps still need the same number.
+
 ## Sounds
 
 TeamSpeak's own UI sounds are copyrighted and not included. To have them, copy the `.wav` files from your own

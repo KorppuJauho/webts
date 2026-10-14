@@ -24,6 +24,13 @@ export class FileTransferError extends Error {
 }
 
 export const ERROR_FILE_ALREADY_EXISTS = 2050;
+
+// Where the bytes go: the server's address, and optionally a port that wins over the one the server names. The server
+// always names its own port (30033), which is wrong when it is published under another number (e.g. Docker
+// "30035:30033") and WebTS reaches it from outside.
+export type TransferTarget = string | { host: string; port?: number };
+const targetOf = (t: TransferTarget, serverPort: number) =>
+  typeof t === "string" ? { host: t, port: serverPort } : { host: t.host, port: t.port || serverPort };
 const ANSWER_MS = 15_000;
 const TRANSFER_MS = 120_000;
 
@@ -114,13 +121,13 @@ async function startTransfer(client: FileTransferClient, command: string, params
 
 // Uploads `data` as `name` (a full path such as "/webTS/picture.jpg") into channel `cid`'s files. An existing file
 // of the same name is not overwritten (TeamSpeak refuses instead).
-export async function uploadFile(client: FileTransferClient, host: string, cid: number, name: string, data: Buffer,
+export async function uploadFile(client: FileTransferClient, host: TransferTarget, cid: number, name: string, data: Buffer,
   cpw = ""): Promise<void> {
   const start = await startTransfer(client, "ftinitupload",
     { name, cid, cpw, size: data.length, overwrite: 0, resume: 0 }, "notifystartupload");
   await new Promise<void>((resolve, reject) => {
     let sent = false;
-    const socket = net.connect({ host, port: start.port });
+    const socket = net.connect(targetOf(host, start.port));
     const timer = setTimeout(() => {
       socket.destroy();
       if (sent) resolve(); // everything was handed over; the server just didn't close its side
@@ -144,7 +151,7 @@ export async function uploadFile(client: FileTransferClient, host: string, cid: 
 }
 
 // Downloads `name` (a full path) from channel `cid`'s files. A file over `maxBytes` is refused before any of it is read.
-export async function downloadFile(client: FileTransferClient, host: string, cid: number, name: string,
+export async function downloadFile(client: FileTransferClient, host: TransferTarget, cid: number, name: string,
   maxBytes: number, cpw = ""): Promise<Buffer> {
   const start = await startTransfer(client, "ftinitdownload", { name, cid, cpw, seekpos: 0 }, "notifystartdownload");
   if (start.size > maxBytes) {
@@ -164,7 +171,7 @@ export async function downloadFile(client: FileTransferClient, host: string, cid
       if (error) reject(error);
       else resolve(Buffer.concat(parts, start.size));
     };
-    const socket = net.connect({ host, port: start.port });
+    const socket = net.connect(targetOf(host, start.port));
     const timer = setTimeout(() => finish(new FileTransferError("The download took too long")), TRANSFER_MS);
     socket.on("connect", () => socket.write(Buffer.from(start.ftkey, "ascii")));
     socket.on("data", (chunk: Buffer) => {
