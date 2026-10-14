@@ -14,6 +14,7 @@ import { Ts3Client, generateIdentity, restoreIdentity, buildCommand, ParsedComma
     createDirectory, uploadFile, downloadFile, FileTransferError } from './tslib/index.js';
 import { imageType, channelImageRef, pictureName, pictureMessage, PictureCache,
     iconId, iconFileName, avatarFileNames, iconType, groupIds, ICON_MAX_BYTES, AVATAR_MAX_BYTES } from './pictures.js';
+import { channelLabel, enterEvent, moveEvent, leaveEvent, type EventPart } from './chat-events.js';
 import { config } from './config.js';
 import { createAccess, Person } from './access.js';
 
@@ -487,6 +488,8 @@ interface ChatMessage {
     partnerUid?: string;
     partnerName?: string;
     outgoing?: boolean;
+    // A join/leave line instead of a message (chat-events.ts): kept and sent like one.
+    event?: EventPart[];
 }
 
 // --- STATE MANAGEMENT ---
@@ -884,6 +887,28 @@ io.on('connection', async (socket) => {
         if (Date.now() >= soundsFrom && socket.connected) socket.emit('ts-sound', name);
     };
     const myCid = () => (userBot ? (clients.get(userBot.getClientId())?.cid || 0) : 0);
+    // Join and leave lines: filed in a channel's chat with the messages, like the TeamSpeak app keeps them in its chat
+    // history. Not in the first seconds after connecting, while the server lists who is there.
+    const label = (cid: number) => channelLabel(channels.get(cid)?.name);
+    // Who made each channel: TeamSpeak moves the maker into it "by Server", which reads like a switch of their own.
+    const channelMaker = new Map<number, number>();
+    const chatEvent = (cid: number, parts: EventPart[] | null) => {
+        if (!parts || !(cid > 0) || Date.now() < soundsFrom) return;
+        const msgObj: ChatMessage = {
+            id: Date.now().toString() + Math.random().toString(36).substring(2, 6),
+            invokerid: 0,
+            invokername: '',
+            targetmode: 2,
+            cid,
+            msg: '',
+            time: Date.now(), // the page shows it in the viewer's own time format
+            timestamp: new Date().toISOString().slice(11, 16),
+            event: parts
+        };
+        messages.push(msgObj);
+        if (messages.length > 200) messages.shift();
+        if (socket.connected) socket.emit('ts-message', msgObj);
+    };
     // Seeing the people in other channels takes a subscription to them (paced, and checked). The server
     // confirms each with notifychannelsubscribed; what isn't confirmed a few seconds later is asked again (twice).
     const subscribedChannels = new Set<number>();
@@ -1192,6 +1217,12 @@ io.on('connection', async (socket) => {
                                 && lastCid === botCurrentCid && botCurrentCid > 0 && g.client_type !== '1') {
                                 sound('neutral_connection_connected_currentchannel');
                             }
+                            // Its line: connected, or came over from a channel we don't see (cfid).
+                            if (clid !== (userBot ? userBot.getClientId() : 0) && lastCid === botCurrentCid
+                                && botCurrentCid > 0 && g.client_type !== '1') {
+                                const cfid = parseInt(g.cfid || '0') || 0;
+                                chatEvent(botCurrentCid, enterEvent(g.client_nickname || `Client ${clid}`, cfid > 0 ? label(cfid) : undefined));
+                            }
                         }
                     }
                     sendStateUpdate();
@@ -1201,13 +1232,28 @@ io.on('connection', async (socket) => {
                 case 'notifyclientleftview': {
                     let lastCtid = 0;
                     let lastReasonId = 0;
-                    
+                    let invoker = '';
+                    let reasonMsg = '';
+
                     for (const g of groups) {
                         if (g.ctid) lastCtid = parseInt(g.ctid);
                         if (g.reasonid) lastReasonId = parseInt(g.reasonid);
-                        
+                        if (g.invokername !== undefined) invoker = g.invokername;
+                        if (g.reasonmsg !== undefined) reasonMsg = g.reasonmsg;
+
                         const clid = parseInt(g.clid);
                         if (clid > 0) {
+                            // Its line: left our channel for one we don't see, or left the server.
+                            const gone = clients.get(clid);
+                            if (clid === (userBot ? userBot.getClientId() : 0)) {
+                                chatEvent(myCid(), leaveEvent(gone?.nickname || '', true, lastReasonId, invoker, reasonMsg));
+                            } else if (gone && gone.cid === myCid() && gone.type === 0) {
+                                chatEvent(myCid(), lastCtid > 0 && [0, 1, 4].includes(lastReasonId)
+                                    ? moveEvent({ who: gone.nickname, self: false, intoHere: false,
+                                        reason: lastReasonId === 1 && channelMaker.get(lastCtid) === clid ? 0 : lastReasonId, // see channelMaker
+                                        from: label(gone.cid), to: label(lastCtid), invoker, reasonMsg })
+                                    : leaveEvent(gone.nickname, false, lastReasonId, invoker, reasonMsg));
+                            }
                             // Sounds: we were kicked or banned; or someone in our channel left, dropped, was kicked or banned.
                             const selfId = userBot ? userBot.getClientId() : 0;
                             if (clid === selfId) {
@@ -1238,15 +1284,27 @@ io.on('connection', async (socket) => {
                 case 'notifyclientmoved': {
                     let lastCtid = 0;
                     let moveReason = 0;
+                    let invoker = '';
+                    let reasonMsg = '';
                     const botClid = userBot ? userBot.getClientId() : 0;
 
                     for (const g of groups) {
                         if (g.ctid) lastCtid = parseInt(g.ctid);
                         else if (g.cid) lastCtid = parseInt(g.cid);
                         if (g.reasonid !== undefined) moveReason = parseInt(g.reasonid) || 0;
+                        if (g.invokername !== undefined) invoker = g.invokername;
+                        if (g.reasonmsg !== undefined) reasonMsg = g.reasonmsg;
 
                         const clid = parseInt(g.clid);
                         if (clid > 0 && clients.has(clid)) {
+                            // Its line: our own move goes into the new channel's chat, someone else's into ours.
+                            const mover = clients.get(clid)!;
+                            const here = myCid();
+                            const ownChannel = moveReason === 1 && channelMaker.get(lastCtid) === clid;
+                            const move = { who: mover.nickname, reason: ownChannel ? 0 : moveReason, from: label(mover.cid), to: label(lastCtid), invoker, reasonMsg };
+                            if (clid === botClid) chatEvent(lastCtid, moveEvent({ ...move, self: true, intoHere: false }));
+                            else if (mover.type === 0 && lastCtid === here) chatEvent(here, moveEvent({ ...move, self: false, intoHere: true }));
+                            else if (mover.type === 0 && mover.cid === here) chatEvent(here, moveEvent({ ...move, self: false, intoHere: false }));
                             // Sounds (reasonid 0 = switched, 1 = moved by someone, 4 = kicked from the channel).
                             const kind = moveReason === 1 ? 'moved' : moveReason === 4 ? 'kicked_channel' : 'switched';
                             if (clid === botClid) {
@@ -1348,6 +1406,7 @@ io.on('connection', async (socket) => {
                 case 'notifychannelcreated': {
                     const g = groups.length > 0 ? groups[0] : parsed.params;
                     const cid = parseInt(g.cid);
+                    if (cid && g.invokerid) channelMaker.set(cid, parseInt(g.invokerid));
                     if (cid) {
                         channels.set(cid, {
                             cid,
@@ -1384,7 +1443,7 @@ io.on('connection', async (socket) => {
                 case 'notifychanneldeleted': {
                     const g = groups.length > 0 ? groups[0] : parsed.params;
                     const cid = parseInt(g.cid);
-                    if (cid) { channels.delete(cid); subscribedChannels.delete(cid); }
+                    if (cid) { channels.delete(cid); subscribedChannels.delete(cid); channelMaker.delete(cid); }
                     sendStateUpdate();
                     break;
                 }

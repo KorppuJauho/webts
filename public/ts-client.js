@@ -1477,13 +1477,37 @@ socket.on('ts-message', (msgObj) => {
         playUiSound(msgObj.outgoing ? 'chat_message_outbound' : 'chat_message_inbound');
         savePrivateTabs();
         renderChatTabs();
-    } else if (msgObj.targetmode === 2) {
+    } else if (msgObj.targetmode === 2 && !msgObj.event) { // a join/leave line has the bridge's own sound
         // Channel chat too, like the desktop app (only private messages had a sound).
         playUiSound(msgObj.invokerid === selfClid ? 'chat_message_outbound' : 'chat_message_inbound');
     }
 });
 
+// A join/leave line ("Alex joined coming from Gaming"), kept with the messages like the TeamSpeak app does. Names
+// and channels are bold; everything goes in as text, never as HTML.
+function renderEventLine(msgObj) {
+    const line = document.createElement('div');
+    line.className = 'chat-event';
+    const time = document.createElement('span');
+    time.className = 'time';
+    time.innerHTML = escapeHtml(messageTime(msgObj));
+    line.appendChild(time);
+    (Array.isArray(msgObj.event) ? msgObj.event : []).forEach((part) => {
+        if (typeof part === 'string') line.appendChild(document.createTextNode(part));
+        else if (part && typeof part.b === 'string') {
+            const b = document.createElement('strong');
+            b.textContent = part.b;
+            line.appendChild(b);
+        }
+    });
+    const empty = chatMessagesEl.querySelector('.chat-empty');
+    if (empty) empty.remove();
+    chatMessagesEl.appendChild(line);
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+}
+
 function renderSingleMessage(msgObj) {
+    if (msgObj.event) return renderEventLine(msgObj);
     const msgEl = document.createElement('div');
     msgEl.className = 'chat-msg';
     
