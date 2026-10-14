@@ -6,6 +6,11 @@ server: voice, chat, pictures and streams, on a PC or a phone, with nothing to i
 > WebTS is an independent fan project. It is not affiliated with, endorsed by or supported by TeamSpeak Systems GmbH.
 > "TeamSpeak" is their trademark. Use it on servers you run or are allowed to connect to.
 
+<p>
+  <img src="docs/screenshot-desktop.png" alt="WebTS on a computer: the channel tree on the left, the channel chat on the right" width="640">
+  <img src="docs/screenshot-phone.png" alt="WebTS on a phone: the controls and the channel tree" width="190">
+</p>
+
 ## What it does
 
 - **Voice:** push-to-talk or voice activation, per-person volume, mute and sound mute in sync with the server, talk

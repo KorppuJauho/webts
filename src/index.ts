@@ -862,19 +862,22 @@ io.on('connection', async (socket) => {
     // Seeing the people in other channels takes a subscription to them (paced, and checked). The server
     // confirms each with notifychannelsubscribed; what isn't confirmed a few seconds later is asked again (twice).
     const subscribedChannels = new Set<number>();
-    let subscribeTimer: ReturnType<typeof setTimeout> | null = null;
+    // Each request checks back on its own channels, so a later one (a channel created after connecting) doesn't
+    // cancel an earlier one's retries.
+    const subscribeTimers = new Set<ReturnType<typeof setTimeout>>();
     const subscribeChannels = (cids: number[], attempt = 0) => {
         const bot = userBot;
         if (!bot) return;
         const missing = cids.filter((cid) => !subscribedChannels.has(cid) && channels.has(cid));
-        if (subscribeTimer) clearTimeout(subscribeTimer);
-        subscribeTimer = null;
         if (!missing.length) return;
         if (attempt > 0) console.log(`[Channels] ${botNickname}: ${missing.length} channel(s) without a subscription confirmation, asking again (${attempt}/2)`);
         for (let i = 0; i < missing.length; i += 50) {
             sendPaced(bot, `channelsubscribe ${missing.slice(i, i + 50).map((id) => `cid=${id}`).join('|')}`);
         }
-        if (attempt < 2) subscribeTimer = setTimeout(() => subscribeChannels(missing, attempt + 1), 6000);
+        if (attempt < 2) {
+            const timer = setTimeout(() => { subscribeTimers.delete(timer); subscribeChannels(missing, attempt + 1); }, 6000);
+            subscribeTimers.add(timer);
+        }
     };
     const requestStreamInfo = (clid: number) => {
         if (!userBot || !(clid > 0)) return;
@@ -1333,6 +1336,9 @@ io.on('connection', async (socket) => {
                             neededTalkPower: knownNeededTalkPower(cid, g.channel_needed_talk_power),
                             ...channelExtras(cid, g)
                         });
+                        // A channel made after we connected: without a subscription, people who join it straight
+                        // from outside (or connect into it) would stay unseen.
+                        subscribeChannels([cid]);
                     }
                     sendStateUpdate();
                     break;
@@ -1353,7 +1359,7 @@ io.on('connection', async (socket) => {
                 case 'notifychanneldeleted': {
                     const g = groups.length > 0 ? groups[0] : parsed.params;
                     const cid = parseInt(g.cid);
-                    if (cid) channels.delete(cid);
+                    if (cid) { channels.delete(cid); subscribedChannels.delete(cid); }
                     sendStateUpdate();
                     break;
                 }
@@ -1647,8 +1653,8 @@ io.on('connection', async (socket) => {
         });
 
         userBot.on('disconnected', () => {
-            if (subscribeTimer) clearTimeout(subscribeTimer);
-            subscribeTimer = null;
+            for (const timer of subscribeTimers) clearTimeout(timer);
+            subscribeTimers.clear();
             sendStateUpdate();
         });
 
