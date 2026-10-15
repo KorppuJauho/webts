@@ -74,11 +74,12 @@ test('the store: kept across connections and bridge restarts', async () => {
   assert.equal(await store.prepare(), true);
   assert.deepEqual(await store.open('user:2'), []);
   store.add('user:2', line('monday', NOW - 2 * DAY));
-  store.add('user:2', { id: 'pm', time: NOW - DAY, targetmode: 1, partnerUid: 'u1', msg: 'hi' });
+  store.add('user:2', { id: 'pm', time: NOW - DAY, targetmode: 1, partnerUid: 'u1', msg: 'hi there' });
   store.add('user:2', { id: 'server', time: NOW, targetmode: 3, msg: 'not kept' });
   await store.release('user:2');
   const file = await fs.readFile(path.join(dir, 'user-2.json'), 'utf8');
-  assert.ok(!file.includes('monday') && !file.includes('hi'), 'locked on disk');
+  // Whole phrases with a space: the locked file is base64 (no spaces), where a short word like "hi" turns up by chance.
+  assert.ok(!file.includes('hello monday') && !file.includes('hi there'), 'locked on disk');
 
   store = new ChatHistoryStore(dir, KEY, { now: () => NOW, log: quiet }); // the bridge restarted
   assert.deepEqual((await store.open('user:2')).map((e) => e.id), ['monday', 'pm']);

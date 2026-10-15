@@ -2959,6 +2959,18 @@ function chromeShapedAnswer(sdp, offerSdp = '') {
     return [...session, ...media].join(eol);
 }
 
+// The answer's session version (third field of its o= line) set to the offer's. The TeamSpeak 6.0.0-beta5 app
+// applies an answer only when that number equals its own offer's and silently drops it otherwise (it rewrites its
+// own answers the same way). Chrome and Edge start at 2, like the app, so they passed by coincidence; Firefox starts
+// at 0, so the app never took its answer and never checked or nominated a connection to it. Only the text sent to
+// TeamSpeak changes, copied as digits.
+const sessionVersion = (sdp) => (/^o=\S+ \S+ (\d+) /m.exec(sdp || '') || [])[1] || '?';
+function withOfferSessionVersion(answerSdp, offerSdp) {
+    const version = /^o=\S+ \S+ (\d+) /m.exec(offerSdp || '');
+    if (!version) return answerSdp;
+    return answerSdp.replace(/^(o=\S+ \S+ )\d+ /m, `$1${version[1]} `);
+}
+
 // Firefox writes the protocol in capitals ("UDP"); Chrome, and what the desktop client sees from it, in small letters.
 function chromeShapedCandidate(candidate) {
     return candidate.replace(/^(candidate:\S+ \d+ )(UDP|TCP)( )/, (m, head, proto, tail) => `${head}${proto.toLowerCase()}${tail}`);
@@ -3161,7 +3173,7 @@ socket.on('webrtc-offer', async (data) => {
             while (pendingRemoteIceCandidates.length > 0) await pc.addIceCandidate(pendingRemoteIceCandidates.shift());
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
-            const localSdp = chromeShapedAnswer(restoreAnswerH264(pc.localDescription.sdp, relabel.original), data.sdp);
+            const localSdp = withOfferSessionVersion(chromeShapedAnswer(restoreAnswerH264(pc.localDescription.sdp, relabel.original), data.sdp), data.sdp);
             const answerInfo = describeSdp(localSdp);
             streamDiagnostics('re-answer', `video port=${answerInfo.videoPort} codecs=${answerInfo.codecs.join(',') || 'none'}`);
             socket.emit('webrtc-answer', { streamId: currentStreamId, sdp: localSdp });
@@ -3268,10 +3280,10 @@ socket.on('webrtc-offer', async (data) => {
         // Send the browser-generated SDP unchanged. Removing extmap, RTX/FEC rtpmap,
         // fmtp, or rtcp-fb lines makes the payload list internally inconsistent.
         // What goes to the desktop client: the answer with TeamSpeak's own H.264 value back.
-        const localSdp = chromeShapedAnswer(restoreAnswerH264(peerConnection.localDescription.sdp, relabel.original), data.sdp);
+        const localSdp = withOfferSessionVersion(chromeShapedAnswer(restoreAnswerH264(peerConnection.localDescription.sdp, relabel.original), data.sdp), data.sdp);
         console.log(`[WebRTC] Sending Answer (${localSdp.length} bytes)`);
         const answerInfo = describeSdp(localSdp);
-        streamDiagnostics('answer', `video port=${answerInfo.videoPort} codecs=${answerInfo.codecs.join(',') || 'none'}`);
+        streamDiagnostics('answer', `video port=${answerInfo.videoPort} codecs=${answerInfo.codecs.join(',') || 'none'} version=${sessionVersion(localSdp)} (browser's ${sessionVersion(peerConnection.localDescription.sdp)})`);
         if (answerInfo.videoPort === '0') {
             // The browser turned the video down: it can't play the format the streamer offered (TeamSpeak's
             // H.264 is a "High" variant browsers don't take). AV1, VP9 and VP8 play.
