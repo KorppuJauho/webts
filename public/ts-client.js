@@ -1372,24 +1372,6 @@ saveSettingsBtn.addEventListener('click', () => {
 });
 
 // --- UI ELEMENTS ---
-// A note for Firefox users: streams from the TeamSpeak app can't be watched in Firefox (the app never sends its
-// connection checks to Firefox, so the connection never completes; a TeamSpeak issue). Voice on Firefox
-// phones works with the WebAssembly Opus. Shown at the top until closed; closing is remembered until the text changes.
-(function showBrowserNotice() {
-    const ua = navigator.userAgent;
-    if (!/Firefox\//.test(ua) || /FxiOS/.test(ua)) return; // Firefox on iPhone is Safari inside
-    const text = "Streams from the TeamSpeak app can't be watched in Firefox. To watch them, use a Chromium-based browser (Chrome, Edge, Brave...).";
-    const key = 'ts_browser_notice_closed';
-    try { if (localStorage.getItem(key) === text) return; } catch (e) {}
-    const notice = document.getElementById('browser-notice');
-    document.getElementById('browser-notice-text').textContent = text;
-    notice.classList.remove('hidden');
-    document.getElementById('browser-notice-close').addEventListener('click', () => {
-        notice.classList.add('hidden');
-        try { localStorage.setItem(key, text); } catch (e) {}
-    });
-})();
-
 const banner = document.getElementById('connection-banner');
 const chatInput = document.getElementById('chat-input');
 const tsContent = document.getElementById('ts-content');
@@ -2926,12 +2908,11 @@ function restoreAnswerH264(sdp, original) {
 }
 
 // Firefox writes its answer differently from Chrome: the DTLS fingerprint and ice-options once at the top
-// (session level) instead of in every media section, a session-level direction, and its own origin line.
-// Valid SDP, and the ts6-manager bot takes it, but the desktop client never connects to Firefox,
-// so the answer is given to it in Chrome's layout. Chrome's and Edge's answers pass unchanged.
-// Firefox also leaves out the AV1 settings line (and VP9's profile) that Chrome repeats from the offer; the
-// offer's own line is copied in for those (the desktop answers Firefox's checks but never completes, as if
-// it didn't take the answer at all).
+// (session level) instead of in every media section, a session-level direction, and its own origin line. It also
+// leaves out the AV1 settings line (and VP9's profile) that Chrome repeats from the offer. So the answer goes to
+// TeamSpeak in Chrome's layout, with those lines copied in from the offer; Chrome's and Edge's answers pass
+// unchanged. (What kept the TeamSpeak app from connecting to Firefox was the answer's session version: see
+// withOfferSessionVersion.)
 function chromeShapedAnswer(sdp, offerSdp = '') {
     const eol = sdp.includes('\r\n') ? '\r\n' : '\n';
     const lines = sdp.split(/\r?\n/);
@@ -3084,8 +3065,8 @@ document.addEventListener('keydown', (e) => {
 });
 
 // 3. The offer from TeamSpeak, and our answer
-// --- Connection-check diagnostics (for troubleshooting streams, e.g. in Firefox) ---
-// Firefox never gets a desktop client's stream past "checking". Logged to the bridge (stream log): what the offer
+// --- Connection-check diagnostics (for troubleshooting stream connections) ---
+// Logged to the bridge (stream log): what the offer
 // and the answer say about the connection setup, the kinds of addresses the streamer sent, and every 2 s for
 // 30 s the browser's own record of the connection checks (each route tried: its state, whether a route was
 // chosen, the checks each way). Only read and logged: nothing sent to the streamer changes.
@@ -3207,17 +3188,13 @@ socket.on('webrtc-offer', async (data) => {
         }
     };
     showVideoRoute(null);
-    // Firefox doesn't get the desktop client's connection to complete (Chrome and Edge do):
-    // after 15 s still checking, say so instead of leaving the viewer at "Connecting...".
-    if (/firefox/i.test(navigator.userAgent)) {
-        setTimeout(() => {
-            if (pc === peerConnection && ['new', 'checking'].includes(pc.iceConnectionState)) {
-                videoLoading.style.display = 'block';
-                videoLoading.innerText = "Firefox can't connect to this stream yet. Please watch in Chrome or Edge.";
-                streamDiagnostics('firefox-timeout', pc.iceConnectionState);
-            }
-        }, 15000);
-    }
+    // A connection still being checked after 15 s goes in the stream log (troubleshooting; the screen keeps
+    // saying "Connecting...").
+    setTimeout(() => {
+        if (pc === peerConnection && ['new', 'checking'].includes(pc.iceConnectionState)) {
+            streamDiagnostics('check-timeout', pc.iceConnectionState);
+        }
+    }, 15000);
     pc.onconnectionstatechange = () => {
         streamDiagnostics('connection', pc.connectionState);
         if (pc !== peerConnection) return;
