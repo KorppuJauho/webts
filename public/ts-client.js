@@ -3495,6 +3495,21 @@ async function shareCodecPreferences(width, height, fps, bitrate) {
     return oneOfEachShareCodec([...caps.codecs].sort((a, b) => rank(a) - rank(b)));
 }
 
+// Lines about formats a media section doesn't list (a=rtcp-fb / a=fmtp / a=rtpmap with a payload type missing from
+// its m= line) taken out. Firefox keeps the rtcp-fb lines of the formats setCodecPreferences left out, and the
+// TeamSpeak app then refuses the whole offer without a word (Chrome's WebRTC says "Failed to parse codecs
+// correctly" for the same offer). Chrome's offers have none, so pass unchanged.
+function withoutStrayPayloadLines(sdp) {
+    const eol = sdp.includes('\r\n') ? '\r\n' : '\n';
+    let listed = null; // payload types of the current media section
+    return sdp.split(/\r?\n/).filter((line) => {
+        const m = line.match(/^m=\S+ \d+ \S+ (.*)$/);
+        if (m) { listed = new Set(m[1].trim().split(/\s+/)); return true; }
+        const pt = line.match(/^a=(?:rtcp-fb|fmtp|rtpmap):(\d+) /);
+        return !(listed && pt && !listed.has(pt[1]));
+    }).join(eol);
+}
+
 // Our offer as TeamSpeak sees it: every H.264 format as Constrained High (640c + the same level); `original`
 // keeps each payload type's real value, which goes back into TeamSpeak's answer (the mirror of watching).
 function relabelShareOfferH264(sdp) {
@@ -3910,7 +3925,7 @@ socket.on('publish-viewer', async (data) => {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         await applyShareParameters(pc);
-        const relabel = relabelShareOfferH264(chromeShapedAnswer(pc.localDescription.sdp)); // Firefox's layout -> Chrome's
+        const relabel = relabelShareOfferH264(withoutStrayPayloadLines(chromeShapedAnswer(pc.localDescription.sdp))); // Firefox's layout -> Chrome's
         viewer.h264Original = relabel.original;
         const sdp = relabel.sdp;
         streamDiagnostics('share', `offer to ${clid}: ${describeSdp(sdp).codecs.join(',')}`);
@@ -3954,7 +3969,7 @@ socket.on('publish-signal', async (data) => {
             const offer = await viewer.pc.createOffer({ iceRestart: true });
             await viewer.pc.setLocalDescription(offer);
             await applyShareParameters(viewer.pc);
-            const relabel = relabelShareOfferH264(chromeShapedAnswer(viewer.pc.localDescription.sdp));
+            const relabel = relabelShareOfferH264(withoutStrayPayloadLines(chromeShapedAnswer(viewer.pc.localDescription.sdp)));
             viewer.h264Original = relabel.original;
             viewer.answered = false;
             streamDiagnostics('share', `reconnect offer to ${data.clid}`);
