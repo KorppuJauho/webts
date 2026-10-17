@@ -1,3 +1,5 @@
+![AI Assisted](https://img.shields.io/badge/AI%20Assisted-Project-00ADD8?style=for-the-badge&logo=dependabot&logoColor=white)
+
 # WebTS
 
 **A self-hosted web client for TeamSpeak servers.** Your friends open a web page and they're on your TeamSpeak
