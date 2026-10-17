@@ -44,22 +44,44 @@ connection into a TeamSpeak client.
 ## Quick start (Docker)
 
 1. You need a TeamSpeak server (3 or 6; streams need 6) and Docker.
-2. Get the code and make your settings:
+2. Make a folder with the two files WebTS needs, and your settings:
    ```bash
-   git clone https://github.com/KorppuJauho/webts.git
-   cd webts
-   cp .env.example .env
+   mkdir webts && cd webts
+   curl -fLO https://raw.githubusercontent.com/KorppuJauho/webts/main/docker-compose.yml
+   curl -fL -o .env https://raw.githubusercontent.com/KorppuJauho/webts/main/.env.example
    ```
    In `.env`, set at least `TS_HOST`, `PUBLIC_URL` and the access settings (next section).
-3. Start it:
+3. Start it (Docker downloads the published image, `ghcr.io/korppujauho/webts`, for x86 and ARM):
    ```bash
    mkdir -p data sounds && sudo chown 1000:1000 data
-   docker compose up -d --build
+   docker compose up -d
    ```
    WebTS listens on `127.0.0.1:3002`. Put your sign-in in front of it (next section) and open `PUBLIC_URL`.
 
 The `data/` folder holds everyone's TeamSpeak identity (with its private key) and saved settings. Back it up: if
 it's lost, everyone gets a new identity and loses the server groups tied to the old one.
+
+Rather build it yourself? Clone this repository and use the `build` lines in `docker-compose.yml` instead of the image.
+
+### Updating
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+The `data/` folder keeps everyone's identity, settings and chat history across updates. What each release changes is
+in [CHANGELOG.md](CHANGELOG.md).
+
+### Versions
+
+- **1.0.x** fixes bugs, **1.x.0** adds features. Neither breaks your setup: settings keep their names (a renamed one
+  keeps accepting its old name) and the `data/` folder keeps working.
+- A **2.0.0** would be the first release that needs changes on your side, and its notes would say exactly which.
+- Image tags: `1` follows every 1.x release (what `docker-compose.yml` uses), `1.0` only fixes to 1.0, `1.0.0` that
+  exact release, and `latest` the newest release.
+- Each image is built by this repository's GitHub workflow, with a signed record of how. To check one:
+  `gh attestation verify oci://ghcr.io/korppujauho/webts:1.0.0 --repo KorppuJauho/webts`
 
 ## Access: who gets in
 
