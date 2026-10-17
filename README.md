@@ -163,7 +163,7 @@ servers, those servers see you.
 ## Known limitations
 
 - Sharing a screen needs a browser on a computer (on a phone you share the camera). Firefox can't share a screen's
-  or window's sound; Chrome and Edge share sound from a tab or the entire screen.
+  or window's sound; Chromium-based browsers (Chrome, Edge, Brave, Opera...) share sound from a tab or the entire screen.
 - Pictures pasted in the TeamSpeak 6 app (its paperclip button) are stored in TeamSpeak's own cloud and can't be
   shown in WebTS; WebTS shows a short note instead. Pictures sent from WebTS work everywhere.
 
