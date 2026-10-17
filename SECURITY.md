@@ -14,9 +14,9 @@ For example: getting past the sign-in (any `ACCESS_MODE`), making WebTS connect 
 (private ones with connect anywhere), reading another person's identity, settings, favourites or chat history, running
 script in the page through something a TeamSpeak server or another user sends, or leaking server passwords.
 
-Not WebTS's own problem, but still welcome as a normal issue: TeamSpeak's own limits (e.g. watching streams in
-Firefox), or a setup that ignores the README's advice (e.g. `ACCESS_MODE=public` with connect anywhere on a server
-reachable from the internet).
+Not WebTS's own problem, but still welcome as a normal issue: TeamSpeak's own limits (e.g. pictures sent with the
+TeamSpeak app's paperclip, which live in TeamSpeak's cloud), or a setup that ignores the README's advice (e.g.
+`ACCESS_MODE=public` with connect anywhere on a server reachable from the internet).
 
 ## Supported versions
 

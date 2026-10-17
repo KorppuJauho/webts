@@ -21,8 +21,9 @@ server: voice, chat, pictures and streams, on a PC or a phone, with nothing to i
   disk (like the TeamSpeak app keeps it).
 - **Pictures:** send a photo (camera or gallery on a phone, paste or drop on a PC). It goes into the channel's file
   browser and shows in the TeamSpeak app too. Hidden photo details such as GPS location are removed first.
-- **Streams:** watch screen shares and cameras from the TeamSpeak 6 app, and share your own screen or camera
-  (Chromium-based browsers). An optional TURN relay helps people behind strict networks.
+- **Streams:** watch screen shares and cameras from the TeamSpeak 6 app, share your own screen (Chromium-based
+  browsers and Firefox on a computer, up to 4K) or your camera (also on phones). An optional TURN relay helps people
+  behind strict networks.
 - **Installable** as an app on phones.
 
 Every browser gets its own TeamSpeak connection and identity, so people show up on the server as themselves
@@ -112,9 +113,10 @@ With `CHAT_HISTORY=on`, WebTS keeps each person's channel chats, private chats a
 `CHAT_HISTORY_DAYS` (30) days, at most `CHAT_HISTORY_LINES` (300) lines per conversation, and shows them again the
 next time they open WebTS, with the day ("21:36 - Mon") like the TeamSpeak app.
 
-- **Only what they were there for:** a person's history holds only what their own connection saw while WebTS was
-  open, and channel chat only from the channel they were in. Unlike the app on an always-on PC, WebTS can't fill in
-  what happened while the page was closed.
+- **Only what they were there for:** TeamSpeak sends chat only to people who are connected, and channel chat only
+  to those in the channel. So a person's history holds what their own WebTS connection saw while it was open, from
+  the channels they were in, just as the TeamSpeak app only shows what it was connected for. To catch everything,
+  leave WebTS open.
 - **Stored on your server:** one file per person in `DATA_DIR/chat/`, locked with `CHAT_HISTORY_KEY`
   (AES-256-GCM). Keep the key out of your backups of the data folder, and those copies can't be read; but while
   WebTS runs it has the key, so whoever runs the server can read the chat. Tell your users.
@@ -162,7 +164,9 @@ servers, those servers see you.
 
 ## Known limitations
 
-- Sharing a screen needs a browser on a computer (on a phone you share the camera). Firefox can't share a window's sound; Chromium-based browsers (Chrome, Edge, Brave, Opera...) share sound from a tab or the entire screen.
+- Sharing a screen needs a browser on a computer (on a phone you share the camera). Firefox shares the
+  picture only, without sound; Chromium-based browsers (Chrome, Edge, Brave, Opera...) share sound from a tab or the
+  entire screen.
 - Pictures pasted in the TeamSpeak 6 app (its paperclip button) are stored in TeamSpeak's own cloud and can't be
   shown in WebTS; WebTS shows a short note instead. Pictures sent from WebTS work everywhere.
 

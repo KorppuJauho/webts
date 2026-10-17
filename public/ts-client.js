@@ -3403,11 +3403,11 @@ const CHROMIUM_BROWSERS = 'a Chromium-based browser (Chrome, Edge, Brave, Operaâ
 const SHARE_SOUND_HELP = (() => {
     const ua = navigator.userAgent;
     if (/Firefox\//.test(ua)) {
-        const text = `Firefox can't share a screen's or window's sound. For sound, share from ${CHROMIUM_BROWSERS}.`;
+        const text = `Firefox shares the picture only, without sound. For sound, share from ${CHROMIUM_BROWSERS}.`;
         return { chromium: false, dialog: text, banner: `No sound is shared: ${text}` };
     }
     if (!/Chrome\//.test(ua)) {
-        const text = `This browser can't share a screen's sound. For sound, share from ${CHROMIUM_BROWSERS}.`;
+        const text = `This browser shares the picture only, without sound. For sound, share from ${CHROMIUM_BROWSERS}.`;
         return { chromium: false, dialog: text, banner: `No sound is shared: ${text}` };
     }
     const brands = ((navigator.userAgentData && navigator.userAgentData.brands) || []).map((b) => b.brand);
