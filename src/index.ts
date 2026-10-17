@@ -133,6 +133,11 @@ app.use((req, res, next) => {
     next();
 });
 
+// "Is it running?" for Docker's health check and monitoring: answers before any sign-in, and says nothing else.
+app.get('/healthz', (req, res) => {
+    res.set('Cache-Control', 'no-store').type('text/plain').send('ok');
+});
+
 app.get(['/', '/index.html'], async (req, res) => {
     access.ensurePublicCookie(req, res);
     if (access.mode !== 'public' && !(await access.identify(req))) {

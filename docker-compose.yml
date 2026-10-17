@@ -1,9 +1,14 @@
-# WebTS with Docker Compose. Copy .env.example to .env, fill it in, then: docker compose up -d --build
+# WebTS with Docker Compose. Copy .env.example to .env, fill it in, then: docker compose up -d
 # Put it behind a sign-in (README: "Access"); never publish it to the internet without one unless you mean to.
 services:
   webts:
-    build: .
-    image: webts:local
+    # The published image: "1" follows every 1.x release (new features and fixes, nothing that breaks your setup).
+    # Pin an exact version such as 1.0.0 if you'd rather update by hand.
+    image: ghcr.io/korppujauho/webts:1
+    # To build from this folder's code instead, comment out the image line above, uncomment these two, and start
+    # with: docker compose up -d --build
+    # build: .
+    # image: webts:local
     container_name: webts
     restart: unless-stopped
     env_file: .env

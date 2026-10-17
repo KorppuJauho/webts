@@ -20,4 +20,5 @@ TeamSpeak app's paperclip, which live in TeamSpeak's cloud), or a setup that ign
 
 ## Supported versions
 
-Only the latest version on `main` gets fixes.
+Fixes go into the latest release (and `main`). Use the `1` image tag (as `docker-compose.yml` does) and
+`docker compose pull` to get them.
