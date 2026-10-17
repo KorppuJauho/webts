@@ -3395,6 +3395,33 @@ const selectCameraQuality = document.getElementById('camera-quality');
 const checkCameraSound = document.getElementById('camera-sound');
 const shareFlipBtn = document.getElementById('share-flip');
 const sharePreview = document.getElementById('share-preview');
+
+// The advice about a share's sound, for the browser in use. Chromium-based browsers (Chrome, Edge, Brave, Opera...)
+// share sound from a tab or the entire screen, with switches in their own picker. Firefox (and Safari) give a screen
+// or window share no sound at all: they return the picture without it and no error.
+const CHROMIUM_BROWSERS = 'a Chromium-based browser (Chrome, Edge, Brave, Opera…)';
+const SHARE_SOUND_HELP = (() => {
+    const ua = navigator.userAgent;
+    if (/Firefox\//.test(ua)) {
+        const text = `Firefox can't share a screen's or window's sound. For sound, share from ${CHROMIUM_BROWSERS}.`;
+        return { chromium: false, dialog: text, banner: `No sound is shared: ${text}` };
+    }
+    if (!/Chrome\//.test(ua)) {
+        const text = `This browser can't share a screen's sound. For sound, share from ${CHROMIUM_BROWSERS}.`;
+        return { chromium: false, dialog: text, banner: `No sound is shared: ${text}` };
+    }
+    const brands = ((navigator.userAgentData && navigator.userAgentData.brands) || []).map((b) => b.brand);
+    const name = brands.includes('Microsoft Edge') || /Edg\//.test(ua) ? 'Edge'
+        : brands.includes('Opera') || /OPR\//.test(ua) ? 'Opera'
+        : brands.includes('Brave') || navigator.brave ? 'Brave'
+        : brands.includes('Google Chrome') ? 'Chrome' : 'This browser';
+    return {
+        chromium: true,
+        dialog: null, // the page's own text
+        banner: `No sound is shared: ${name} shares sound only from a tab ("Also share tab audio") or an entire screen ("Also share system audio"). A window has no sound.`
+    };
+})();
+if (SHARE_SOUND_HELP.dialog) document.getElementById('share-audio-desc').textContent = SHARE_SOUND_HELP.dialog;
 let share = null; // { kind, stream, resolution, fps, bitrate, streamId, viewers: Map clid -> { pc, pending, answered }, codecs, timer, scale, facing }
 
 // Phones can't share a screen from the browser, but can stream a camera (so can a PC with a webcam).
@@ -3498,6 +3525,22 @@ function relabelShareOfferH264(sdp) {
         return `${head}640c${level}`;
     });
     return { sdp: out, original };
+}
+
+// The TeamSpeak app answers H.264 at level 3.1 (profile-level-id ...1f), and Firefox sends no bigger picture than
+// the viewer's level allows: 3.1 is at most 1280x720, so a 4K share reached the app as 720p.
+// The app plays streams far above its label (Chrome's and Edge's 4K shares, which ignore the level), so the browser
+// is told level 5.2 (34), enough for 4K at 60 fps, with level-asymmetry-allowed=1 so it applies to what it sends.
+// Only the browser sees this: TeamSpeak still gets our 640c1f offer unchanged.
+function withShareSendLevel(sdp) {
+    const h264 = new Set([...sdp.matchAll(/^a=rtpmap:(\d+) H264\//gim)].map((m) => m[1]));
+    return sdp.replace(/^(a=fmtp:(\d+) )(.*)$/gim, (line, head, pt, params) => {
+        if (!h264.has(pt)) return line;
+        const rest = params.split(';').map((p) => p.trim()).filter((p) => p && !/^level-asymmetry-allowed=/i.test(p))
+            .map((p) => p.replace(/^(profile-level-id=[0-9a-f]{4})([0-9a-f]{2})$/i,
+                (m, profile, level) => (parseInt(level, 16) < 0x34 ? `${profile}34` : m)));
+        return `${head}${['level-asymmetry-allowed=1', ...rest].join(';')}`;
+    });
 }
 
 // What the browser really encodes for a viewer (format, hardware or software, size, frame rate, and what
@@ -3777,7 +3820,9 @@ async function startShare() {
         streamDiagnostics('share-error', `${e.name}: ${e.message} (sound=${wantAudio} restrictOwnAudio=${canRestrict} ${resolution}p${fps})`);
         if (/timeout/i.test(e.message || '')) {
             if (wantAudio && canRestrict) restrictOwnAudioFailed = true;
-            showBanner("Couldn't start sharing: the browser timed out. If it was a tab, open that tab once (Edge puts unused tabs to sleep) and try again; or share the entire screen with \"Also share system audio\".", 'error');
+            showBanner(SHARE_SOUND_HELP.chromium
+                ? "Couldn't start sharing: the browser timed out. If it was a tab, open that tab once (unused tabs can fall asleep) and try again; or share the entire screen with \"Also share system audio\"."
+                : "Couldn't start sharing: the browser timed out. Try again.", 'error');
         } else {
             showBanner(`Couldn't start sharing (${e.message}).`, 'error');
         }
@@ -3792,7 +3837,7 @@ async function startShare() {
         + ` restrictOwnAudio=${audioTrack ? (audioTrack.getSettings().restrictOwnAudio ?? 'unsupported') : '-'}`
         + ` surface=${stream.getVideoTracks()[0].getSettings().displaySurface || '?'}`);
     if (wantAudio && !audioTrack) {
-        showBanner("No sound is shared: Chrome shares sound only from a tab (\"Also share tab audio\") or an entire screen (\"Also share system audio\"). A window has no sound.", 'error', null, { tag: 'share-sound', hideAfterMs: 15000 });
+        showBanner(SHARE_SOUND_HELP.banner, 'error', null, { tag: 'share-sound', hideAfterMs: 15000 });
     }
     const video = stream.getVideoTracks()[0];
     video.contentHint = fps >= 60 ? 'motion' : 'detail';
@@ -3924,7 +3969,7 @@ socket.on('publish-signal', async (data) => {
         if (!sdp) return;
         try {
             // TeamSpeak answered our 640c labels: the browser gets its own H.264 values back.
-            await viewer.pc.setRemoteDescription({ type: 'answer', sdp: restoreAnswerH264(sdp, viewer.h264Original || {}) });
+            await viewer.pc.setRemoteDescription({ type: 'answer', sdp: withShareSendLevel(restoreAnswerH264(sdp, viewer.h264Original || {})) });
             viewer.answered = true;
             for (const candidate of viewer.pending.splice(0)) await viewer.pc.addIceCandidate(candidate).catch(() => {});
         } catch (e) {
