@@ -296,8 +296,18 @@
             color: #22c55e;
         }
 
+        /* People reach the channel box's edges; their indent under the channel is inside the row (the list's own
+           indent left a dark strip between the box and the rows, 2026-10-20). */
         .ts-user-list {
-            padding-left: 1.2rem;
+            padding-left: 0;
+        }
+        .ts-user-list .ts-user {
+            padding-left: calc(8px + 1.2rem);
+            margin: 1px 0;
+            border-radius: 0;
+        }
+        .ts-user-list .ts-user.is-talking {
+            padding-left: calc(6px + 1.2rem); /* the 2px talking edge, without moving the name */
         }
 
         /* Right panel (Chat) */
