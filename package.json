@@ -1,6 +1,6 @@
 {
   "name": "webts",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A self-hosted web client for TeamSpeak servers: voice, chat, pictures and streams in the browser",
   "private": true,
   "license": "OSL-3.0",
