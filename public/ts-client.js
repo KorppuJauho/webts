@@ -1537,6 +1537,37 @@ function hideBanner(tag) {
     banner.style.display = 'none';
 }
 
+// --- A NEW VERSION OF THE PAGE ---
+// An open page keeps running the code it started with (a phone keeps it open in the background for days). When it
+// comes back to the foreground, and every 10 minutes, it asks the server for its files' fingerprints (ETag): changed
+// ones mean the page was updated, and a banner offers Reload. Never reloaded by itself, so a call or a stream isn't
+// cut off; closed with ×, it comes back at the next check.
+const PAGE_FILES = ['./', 'ts-client.js', 'chat-pictures.js'];
+let pageFingerprint = null;
+async function pageFilesFingerprint() {
+    const parts = [];
+    for (const file of PAGE_FILES) {
+        let answer = await fetch(file, { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' });
+        if (answer.status === 405) answer = await fetch(file, { cache: 'no-store', credentials: 'same-origin' });
+        if (!answer.ok) return null;
+        parts.push(answer.headers.get('etag') || answer.headers.get('last-modified') || answer.headers.get('content-length') || '');
+    }
+    return parts.join('|');
+}
+async function checkPageVersion() {
+    if (document.hidden) return;
+    let now = null;
+    try { now = await pageFilesFingerprint(); } catch (e) {}
+    if (!now) return;
+    if (pageFingerprint === null) { pageFingerprint = now; return; }
+    if (now === pageFingerprint) return;
+    if (banner.style.display !== 'none' && bannerTag !== 'page-update') return; // something else is shown: next time
+    showBanner('This page has been updated.', 'info', { label: 'Reload', onClick: () => location.reload() }, { tag: 'page-update' });
+}
+setTimeout(checkPageVersion, 5000);
+setInterval(checkPageVersion, 10 * 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkPageVersion(); });
+
 // Opened on another device: the bridge closed this connection (one connection per person).
 let replacedElsewhere = false;
 socket.on('session-replaced', () => {
