@@ -3,6 +3,17 @@
 What each release changes. Versions: **1.0.x** fixes, **1.x.0** features, **2.0.0** would be the first release that
 needs changes on your side (README: "Versions").
 
+## 1.1.0 (unreleased)
+
+- **Profile pictures:** Settings > General > Profile picture sets, changes or removes your TeamSpeak avatar, so the
+  TeamSpeak app shows it too and it's the same on all your devices. Pictures are fitted inside 320×320 (their shape
+  kept) and lose their hidden details; a server with a small avatar size limit gets a smaller version. WebTS keeps a
+  copy in `data/avatars/` and puts it on another server you use the first time you join it (never back where it was
+  removed).
+- **myTeamSpeak pictures:** people signed in to myTeamSpeak in the TeamSpeak app show their myTeamSpeak picture when
+  they have no avatar on the server (fetched by WebTS, so viewers' browsers don't contact Google).
+- **Fixed:** someone who changed their avatar kept showing the old one for up to 6 hours.
+
 ## 1.0.0 (2026-10-17)
 
 The first release. Image: `ghcr.io/korppujauho/webts:1.0.0` (x86 and ARM).

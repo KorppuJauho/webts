@@ -26,6 +26,9 @@ server: voice, chat, pictures and streams, on a PC or a phone, with nothing to i
 - **Streams:** watch screen shares and cameras from the TeamSpeak 6 app, share your own screen (Chromium-based
   browsers and Firefox on a computer, up to 4K) or your camera (also on phones). An optional TURN relay helps people
   behind strict networks.
+- **Profile pictures:** set, change or remove your picture in Settings. It becomes your TeamSpeak avatar, so the
+  TeamSpeak app shows it too, and it's the same on all your devices. People signed in to myTeamSpeak in the app show
+  their myTeamSpeak picture when they have no avatar on the server.
 - **Installable** as an app on phones.
 
 Every browser gets its own TeamSpeak connection and identity, so people show up on the server as themselves
@@ -58,8 +61,8 @@ connection into a TeamSpeak client.
    ```
    WebTS listens on `127.0.0.1:3002`. Put your sign-in in front of it (next section) and open `PUBLIC_URL`.
 
-The `data/` folder holds everyone's TeamSpeak identity (with its private key) and saved settings. Back it up: if
-it's lost, everyone gets a new identity and loses the server groups tied to the old one.
+The `data/` folder holds everyone's TeamSpeak identity (with its private key), saved settings and profile pictures.
+Back it up: if it's lost, everyone gets a new identity and loses the server groups tied to the old one.
 
 Rather build it yourself? Clone this repository and use the `build` lines in `docker-compose.yml` instead of the image.
 
@@ -109,6 +112,11 @@ The menu's "Sign out" then signs out of Access.
 WebTS users are ordinary TeamSpeak clients and get the server's normal permissions. For pictures, they need
 permission to upload files (and to create the picture folder) in channels; viewers need permission to download
 files. If uploads are refused, WebTS says so in the chat.
+
+Profile pictures follow the server's "max avatar file size" permission (stock 200 KB; -1 = no limit, 0 = none).
+WebTS fits pictures inside 320×320 like the TeamSpeak app and makes them smaller when the limit asks for it. Removing
+a picture clears it for everyone; the file itself stays in the server's files until the next picture replaces it (a
+normal user can't delete it).
 
 The TeamSpeak apps fetch pictures from the server's file transfer port, which the server tells them is 30033 (its
 own port). If you publish the server's port 30033 under another number (e.g. Docker `30035:30033`), the apps get no
