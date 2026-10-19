@@ -8,6 +8,8 @@ needs changes on your side (README: "Versions").
 - **Avatars in the channel tree:** a small round picture next to each name, as the TeamSpeak app shows it (the
   avatar, else the myTeamSpeak picture, else a grey default figure), with a green ring while they talk. The person
   menu (right-click, or tap on a phone) shows the picture bigger.
+- **Camera rotation (phones):** while streaming the camera, the picture follows how the phone is held (by its motion
+  sensor), also with the phone's auto-rotate off; a button next to "switch camera" locks the current turn.
 - **"This page has been updated":** an open page (a phone keeps it open for days) checks when it comes back to the
   foreground, and every 10 minutes, whether WebTS was updated, and offers Reload (never automatic).
 - **Fixed:** a dark strip between the channel box and the people in it; the rows now reach the box's edges.
