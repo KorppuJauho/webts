@@ -21,6 +21,8 @@ import { pickServer, publicServer, type TsServer } from './servers.js';
 import { resolveServer, ServerAddressError, TryLimit, type AllowList } from './any-server.js';
 import { cleanFavorites, FavoritesStore } from './favorites.js';
 import { createAccess, Person } from './access.js';
+import { AVATAR_UPLOAD_NAME, AVATAR_TOO_BIG, AvatarStore, avatarFlag, checkAvatar, myTeamSpeakAvatarUrl,
+    shouldUploadSaved } from './avatars.js';
 
 // --- CONFIGURATION ---
 const access = createAccess(config);
@@ -524,6 +526,7 @@ interface ClientData {
     channelGroup: number;
     avatar: string;
     avatarName?: string;            // the avatar's file name, when the server says it
+    myTeamSpeakAvatar: string;      // the myTeamSpeak picture's version ('' = none): the fallback without an avatar
 }
 
 // A server or channel group: its name and icon, for the badges next to people.
@@ -707,6 +710,9 @@ const iconCache = new PictureCache(30 * 1024 * 1024, 6 * 60 * 60 * 1000);
 const iconMissing = new Map<string, number>();        // file -> until when it counts as missing
 const avatarFound = new Map<string, string>();        // identity -> the avatar file name that worked
 let avatarNamingLogged = false;
+// myTeamSpeak pictures (the fallback when someone has no avatar on the server): server|identity -> address.
+const myTeamSpeakAvatars = new Map<string, string>();
+const avatarStore = new AvatarStore(path.join(DATA_DIR, 'avatars'));
 
 // The person's TeamSpeak connection, and the server it's on.
 function sessionBot(personKey: string): { bot: Ts3Client; server: TsServer } | null {
@@ -727,8 +733,9 @@ async function waitForSessionBot(personKey: string, ms = 10_000): Promise<{ bot:
     }
 }
 
-async function fetchServerFile(server: TsServer, bot: Ts3Client, name: string, maxBytes: number): Promise<Buffer | null> {
-    const key = `${server.id}|${name}`;
+// `version`: the avatar's flag, so a changed avatar isn't served from the cache (nor counted missing).
+async function fetchServerFile(server: TsServer, bot: Ts3Client, name: string, maxBytes: number, version = ''): Promise<Buffer | null> {
+    const key = `${server.id}|${name}${version ? `|${version}` : ''}`;
     const cached = iconCache.get(key);
     if (cached) return cached;
     if ((iconMissing.get(key) || 0) > Date.now()) return null;
@@ -773,18 +780,47 @@ app.get('/server-icon', async (req, res) => {
     sendIcon(res, data, true);
 });
 
+// A myTeamSpeak picture, fetched by the bridge (so viewers' browsers never contact Google) and kept like the icons.
+async function fetchMyTeamSpeakAvatar(url: string): Promise<Buffer | null> {
+    const key = `myts|${url}`;
+    const cached = iconCache.get(key);
+    if (cached) return cached;
+    if ((iconMissing.get(key) || 0) > Date.now()) return null;
+    try {
+        const answer = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(8000) });
+        if (!answer.ok) throw new Error(`HTTP ${answer.status}`);
+        if (Number(answer.headers.get('content-length') || 0) > AVATAR_MAX_BYTES) throw new Error('too big');
+        const data = Buffer.from(await answer.arrayBuffer());
+        const type = iconType(data);
+        if (data.length > AVATAR_MAX_BYTES || !type || type.svg) throw new Error('not a picture');
+        iconCache.set(key, data);
+        return data;
+    } catch (e: any) {
+        iconMissing.set(key, Date.now() + 10 * 60 * 1000);
+        console.log(`[Icons] myTeamSpeak picture not fetched: ${e.message}`);
+        return null;
+    }
+}
+
 app.get('/avatar', async (req, res) => {
     const person = await access.identify(req);
     if (!person) return res.status(403).end();
     const uid = typeof req.query.uid === 'string' ? req.query.uid : '';
     const serverName = typeof req.query.name === 'string' ? req.query.name : undefined;
+    const version = typeof req.query.v === 'string' ? req.query.v.slice(0, 64) : '';
     if (!avatarFileNames(uid, serverName).length) return res.status(404).end();
     const on = await waitForSessionBot(person.key);
     if (!on) return res.status(503).set('Retry-After', '3').end();
+    // myts=1: their myTeamSpeak picture, from the address the server passed on (never one the page names).
+    if (req.query.myts === '1') {
+        const url = myTeamSpeakAvatars.get(`${on.server.id}|${uid}`);
+        const data = url ? await fetchMyTeamSpeakAvatar(url) : null;
+        return data ? sendIcon(res, data, false) : res.status(404).end();
+    }
     const known = avatarFound.get(`${on.server.id}|${uid}`);
     const names = known ? [known] : avatarFileNames(uid, serverName);
     for (const [i, name] of names.entries()) {
-        const data = await fetchServerFile(on.server, on.bot, name, AVATAR_MAX_BYTES);
+        const data = await fetchServerFile(on.server, on.bot, name, AVATAR_MAX_BYTES, version);
         if (!data) continue;
         if (!known) {
             avatarFound.set(`${on.server.id}|${uid}`, name);
@@ -888,8 +924,21 @@ io.on('connection', async (socket) => {
             serverGroups: g.client_servergroups !== undefined ? groupIds(g.client_servergroups) : old?.serverGroups ?? [],
             channelGroup: g.client_channel_group_id !== undefined ? (parseInt(g.client_channel_group_id) || 0) : old?.channelGroup ?? 0,
             avatar: g.client_flag_avatar !== undefined ? g.client_flag_avatar : old?.avatar ?? '',
-            avatarName: g.client_base64HashClientUID || old?.avatarName
+            avatarName: g.client_base64HashClientUID || old?.avatarName,
+            myTeamSpeakAvatar: g.client_myteamspeak_avatar !== undefined
+                ? noteMyTeamSpeakAvatar(g.client_unique_identifier || old?.uid || '', g.client_myteamspeak_avatar)
+                : old?.myTeamSpeakAvatar ?? ''
         };
+    };
+    // The address stays in the bridge; the page gets only its version (the time at its end), to ask /avatar?myts=1.
+    const noteMyTeamSpeakAvatar = (uid: string, value: string): string => {
+        if (!uid) return '';
+        const url = myTeamSpeakAvatarUrl(value);
+        const key = `${tsServer.id}|${uid}`;
+        if (!url) { myTeamSpeakAvatars.delete(key); return ''; }
+        myTeamSpeakAvatars.set(key, url);
+        if (myTeamSpeakAvatars.size > 5000) myTeamSpeakAvatars.clear();
+        return url.slice(url.lastIndexOf('/') + 1);
     };
     const channelExtras = (cid: number, g: Record<string, string>) => {
         const old = channels.get(cid);
@@ -1266,7 +1315,8 @@ io.on('connection', async (socket) => {
                                 iconId: 0,
                                 serverGroups: [],
                                 channelGroup: 0,
-                                avatar: ''
+                                avatar: '',
+                                myTeamSpeakAvatar: ''
                             });
                         }
 
@@ -1910,6 +1960,8 @@ io.on('connection', async (socket) => {
         console.log(`[TeamSpeak] Bot '${botNickname}' successfully connected to ${tsServer.name} (${tsServer.host})`);
         soundsFrom = Date.now() + 3000;
         socket.emit('ts-sound', 'connected');
+        // Their saved profile picture onto a server it has never been put on (once the lists have told their avatar).
+        setTimeout(() => void restoreSavedAvatar(), 8000);
 
         // Register first so stream notifications cannot race the initial snapshots.
         // All paced (see PACING): sent at once, they tripped the server's flood limit.
@@ -2043,6 +2095,73 @@ io.on('connection', async (socket) => {
             pictureSaving = false;
         }
     });
+
+    // --- PROFILE PICTURE (src/avatars.ts) ---
+    // The page sends a picture it has fitted inside 320×320 (JPEG, or PNG when it has transparent parts). It goes to
+    // the server as this person's avatar, replacing an old one; its flag tells everyone; WebTS keeps a copy for their
+    // other servers. Over the server's avatar size limit the answer is { tooBig }, and the page sends a smaller one.
+    let avatarBusy = false;
+    async function putAvatar(bot: Ts3Client, data: Buffer): Promise<string> {
+        await queueTransfer(bot, () => uploadFile(bot, fileTarget(tsServer), 0, AVATAR_UPLOAD_NAME, data, '', true));
+        const flag = avatarFlag(data);
+        bot.sendCommand(buildCommand('clientupdate', { client_flag_avatar: flag }));
+        return flag;
+    }
+    socket.on('avatar-set', async (data: unknown, ack?: (answer: object) => void) => {
+        if (typeof ack !== 'function') return;
+        const picture = Buffer.isBuffer(data) ? data : data instanceof ArrayBuffer ? Buffer.from(data) : null;
+        if (!picture) return ack({ error: 'The picture arrived garbled. Please try again.' });
+        const checked = checkAvatar(picture);
+        if ('error' in checked) return ack({ error: checked.error });
+        const bot = userBot;
+        if (!bot || bot.getState() !== 'connected') return ack({ error: 'Not connected to TeamSpeak.' });
+        if (avatarBusy) return ack({ error: 'The previous picture is still being saved.' });
+        avatarBusy = true;
+        try {
+            await putAvatar(bot, picture);
+            await avatarStore.set(email, picture, checked.ext, tsServer.id);
+            console.log(`[Avatar] ${botNickname} set a profile picture (${Math.round(picture.length / 1024)} KB)`);
+            ack({ ok: true });
+        } catch (e: any) {
+            if (e instanceof FileTransferError && e.code === AVATAR_TOO_BIG) {
+                ack({ tooBig: true });
+                return;
+            }
+            console.log(`[Avatar] ${botNickname}: not set: ${e.message}${e.code ? ` (${e.code})` : ''}`);
+            ack({ error: e instanceof FileTransferError && e.code === 2568
+                ? "This server doesn't allow you a profile picture."
+                : `The picture couldn't be saved (${e.message}).` });
+        } finally {
+            avatarBusy = false;
+        }
+    });
+    // Removing: the flag is cleared, so everyone shows none. The file itself stays on the server (a normal user
+    // can't delete it; the next picture replaces it). WebTS's copy goes.
+    socket.on('avatar-remove', async (_data: unknown, ack?: (answer: object) => void) => {
+        if (typeof ack !== 'function') return;
+        const bot = userBot;
+        if (!bot || bot.getState() !== 'connected') return ack({ error: 'Not connected to TeamSpeak.' });
+        bot.sendCommand(buildCommand('clientupdate', { client_flag_avatar: '' }));
+        await avatarStore.remove(email).catch((e) => console.log(`[Avatar] ${botNickname}: copy not removed: ${e.message}`));
+        console.log(`[Avatar] ${botNickname} removed their profile picture`);
+        ack({ ok: true });
+    });
+    async function restoreSavedAvatar(): Promise<void> {
+        const bot = userBot;
+        if (!bot || bot.getState() !== 'connected' || closed) return;
+        const saved = await avatarStore.get(email).catch(() => null);
+        const current = clients.get(bot.getClientId())?.avatar ?? '';
+        if (!saved || !shouldUploadSaved(saved, tsServer.id, current)) return;
+        try {
+            const flag = await putAvatar(bot, saved.data);
+            await avatarStore.markUploaded(email, tsServer.id, flag);
+            console.log(`[Avatar] ${botNickname}: saved profile picture put on ${tsServer.name}`);
+        } catch (e: any) {
+            // Too big or not allowed there: remembered, so it isn't tried at every visit.
+            await avatarStore.markUploaded(email, tsServer.id, '').catch(() => {});
+            console.log(`[Avatar] ${botNickname}: saved profile picture not put on ${tsServer.name}: ${e.message}${e.code ? ` (${e.code})` : ''}`);
+        }
+    }
 
     // Poke a person; TeamSpeak takes up to 100 characters of message.
     socket.on('poke', (data: { clid?: number; msg?: string }) => {

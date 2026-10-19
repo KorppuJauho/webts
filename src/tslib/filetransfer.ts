@@ -120,11 +120,11 @@ async function startTransfer(client: FileTransferClient, command: string, params
 }
 
 // Uploads `data` as `name` (a full path such as "/webTS/picture.jpg") into channel `cid`'s files. An existing file
-// of the same name is not overwritten (TeamSpeak refuses instead).
+// of the same name is not overwritten (TeamSpeak refuses instead), unless `overwrite` (e.g. a new avatar).
 export async function uploadFile(client: FileTransferClient, host: TransferTarget, cid: number, name: string, data: Buffer,
-  cpw = ""): Promise<void> {
+  cpw = "", overwrite = false): Promise<void> {
   const start = await startTransfer(client, "ftinitupload",
-    { name, cid, cpw, size: data.length, overwrite: 0, resume: 0 }, "notifystartupload");
+    { name, cid, cpw, size: data.length, overwrite: overwrite ? 1 : 0, resume: 0 }, "notifystartupload");
   await new Promise<void>((resolve, reject) => {
     let sent = false;
     const socket = net.connect(targetOf(host, start.port));

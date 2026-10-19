@@ -1811,10 +1811,108 @@ function syncMuteToTeamSpeak(state) {
     socket.emit('client-update', update);
 }
 
+// --- PROFILE PICTURE (Settings > General) ---
+// The picture is prepared here (chat-pictures.js: inside 320×320, no hidden details) and shown before saving; Save
+// sends it to the bridge, which makes it your TeamSpeak avatar. Over the server's size limit the bridge answers
+// "too big", and the next, smaller version goes. Remove clears it.
+const avatarPreview = document.getElementById('avatar-preview');
+const avatarStatus = document.getElementById('avatar-status');
+const avatarButtons = Object.fromEntries(['change', 'camera', 'remove', 'save', 'cancel']
+    .map((name) => [name, document.getElementById(`avatar-${name}`)]));
+const AVATAR_INFO = avatarStatus.textContent;
+let avatarPending = null; // { versions, url } while a picked picture waits for Save
+let avatarBusy = false;
+
+function avatarSay(text, error = false) {
+    avatarStatus.textContent = text || AVATAR_INFO;
+    avatarStatus.classList.toggle('error', !!error);
+}
+function showOwnAvatar() {
+    const me = latestState && (latestState.clients || []).find((c) => c.clid === latestState.selfClid);
+    const show = (name, on) => avatarButtons[name].classList.toggle('hidden', !on);
+    const connected = !!(latestState && latestState.connected && me);
+    if (avatarPending) {
+        avatarPreview.innerHTML = `<img src="${escapeHtml(avatarPending.url)}" alt="">`;
+    } else {
+        const url = me && me.avatar ? avatarUrl(me) : '';
+        avatarPreview.innerHTML = url ? `<img src="${escapeHtml(url)}" alt="" onerror="this.remove()">` : 'No picture';
+    }
+    avatarPreview.classList.toggle('pending', !!avatarPending);
+    show('change', !avatarPending);
+    show('camera', !avatarPending && window.matchMedia('(pointer: coarse)').matches);
+    show('remove', !avatarPending && !!(me && me.avatar));
+    show('save', !!avatarPending);
+    show('cancel', !!avatarPending);
+    for (const button of Object.values(avatarButtons)) button.disabled = avatarBusy || !connected;
+}
+function dropPendingAvatar() {
+    if (avatarPending) URL.revokeObjectURL(avatarPending.url);
+    avatarPending = null;
+}
+async function pickAvatar(file) {
+    if (!file) return;
+    dropPendingAvatar();
+    avatarSay('Preparing the picture…');
+    try {
+        const versions = await avatarVersions(file);
+        avatarPending = { versions, url: URL.createObjectURL(new Blob([versions[0]])) };
+        avatarSay('This is how others will see it. Save it to use it.');
+    } catch (e) {
+        avatarSay(e.message, true);
+    }
+    showOwnAvatar();
+}
+const avatarAsk = (event, data) => new Promise((resolve) => {
+    socket.timeout(30000).emit(event, data, (err, answer) => resolve(err ? { error: 'No answer from WebTS. Please try again.' } : answer || {}));
+});
+async function saveAvatar() {
+    if (!avatarPending || avatarBusy) return;
+    avatarBusy = true;
+    avatarSay('Saving…');
+    showOwnAvatar();
+    let answer = {};
+    for (const version of avatarPending.versions) {
+        answer = await avatarAsk('avatar-set', version.buffer.slice(version.byteOffset, version.byteOffset + version.byteLength));
+        if (!answer.tooBig) break;
+    }
+    avatarBusy = false;
+    if (answer.ok) {
+        dropPendingAvatar();
+        avatarSay('Saved.');
+        setTimeout(() => { if (!avatarPending && avatarStatus.textContent === 'Saved.') avatarSay(''); }, 4000);
+    } else {
+        avatarSay(answer.tooBig ? "This server allows only a very small profile picture, or none." : answer.error || "The picture couldn't be saved.", true);
+    }
+    showOwnAvatar();
+}
+async function removeAvatar() {
+    if (avatarBusy) return;
+    avatarBusy = true;
+    showOwnAvatar();
+    const answer = await avatarAsk('avatar-remove', {});
+    avatarBusy = false;
+    avatarSay(answer.ok ? 'Removed.' : answer.error || "The picture couldn't be removed.", !answer.ok);
+    showOwnAvatar();
+}
+avatarButtons.change.addEventListener('click', () => document.getElementById('avatar-file').click());
+avatarButtons.camera.addEventListener('click', () => document.getElementById('avatar-camera-file').click());
+avatarButtons.save.addEventListener('click', saveAvatar);
+avatarButtons.remove.addEventListener('click', removeAvatar);
+avatarButtons.cancel.addEventListener('click', () => { dropPendingAvatar(); avatarSay(''); showOwnAvatar(); });
+for (const id of ['avatar-file', 'avatar-camera-file']) {
+    const input = document.getElementById(id);
+    input.addEventListener('change', () => {
+        const file = input.files && input.files[0];
+        input.value = '';
+        pickAvatar(file);
+    });
+}
+
 // --- STATE MANAGEMENT ---
 socket.on('ts-state', (state) => {
     latestState = state;
     selfClid = state.selfClid || 0;
+    showOwnAvatar();
     leaveStreamIfApart(state);
     followOwnChannel(state);
     syncMuteToTeamSpeak(state);
@@ -2274,12 +2372,22 @@ function personByUid(uid) {
     return uid && latestState ? (latestState.clients || []).find((c) => c.uid === uid) : undefined;
 }
 
-// Their avatar, when they have one (the hash changes when they change it, so the address does too).
+// Their picture: the avatar they put on the server, else their myTeamSpeak picture (someone signed in to myTeamSpeak
+// in the TeamSpeak app), as the app shows them. Each has a version in the address, so a new picture is fetched anew.
+function avatarUrl(person) {
+    if (!person || !person.uid) return '';
+    if (person.avatar) {
+        return `/avatar?uid=${encodeURIComponent(person.uid)}&v=${encodeURIComponent(person.avatar)}`
+            + (person.avatarName ? `&name=${encodeURIComponent(person.avatarName)}` : '');
+    }
+    if (person.myTeamSpeakAvatar) {
+        return `/avatar?uid=${encodeURIComponent(person.uid)}&myts=1&v=${encodeURIComponent(person.myTeamSpeakAvatar)}`;
+    }
+    return '';
+}
 function avatarHtml(person, cls) {
-    if (!person || !person.uid || !person.avatar) return '';
-    const params = `uid=${encodeURIComponent(person.uid)}&v=${encodeURIComponent(person.avatar)}`
-        + (person.avatarName ? `&name=${encodeURIComponent(person.avatarName)}` : '');
-    return `<img class="${cls}" src="/avatar?${escapeHtml(params)}" alt="" onerror="retryAvatar(this)">`;
+    const url = avatarUrl(person);
+    return url ? `<img class="${cls}" src="${escapeHtml(url)}" alt="" onerror="retryAvatar(this)">` : '';
 }
 
 // Once more after 2 s (the connection may have been a moment late), then left out.

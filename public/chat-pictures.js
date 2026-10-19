@@ -229,6 +229,51 @@ async function preparePicture(file) {
     return reencodeAsJpeg(file, PICTURE_MAX_BYTES);
 }
 
+// --- Profile pictures ---
+// A profile picture as the TeamSpeak app makes one: fitted inside 320×320 (its shape kept, never enlarged) and
+// saved again, so no hidden details go along. PNG when it has see-through parts, else JPEG. A server's avatar size
+// limit (stock 200 KB) can refuse it, so smaller versions follow, best first; the page sends them in turn.
+const AVATAR_MAX_SIDE = 320;
+const AVATAR_STEPS = [[320, 0.9], [320, 0.8], [320, 0.65], [240, 0.65], [160, 0.6], [96, 0.6]];
+
+async function avatarVersions(file) {
+    let bitmap;
+    try {
+        bitmap = await createImageBitmap(file); // turned upright as the photo says
+    } catch (e) {
+        throw new Error("This picture's format isn't supported. Try a JPEG or PNG.");
+    }
+    try {
+        const draw = (side, background) => {
+            const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+            canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+            const ctx = canvas.getContext('2d');
+            if (background) {
+                ctx.fillStyle = background; // see-through parts get white behind them, not black
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+            ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+            return canvas;
+        };
+        const encode = (canvas, type, quality) => new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+        const plain = draw(AVATAR_MAX_SIDE, null);
+        const alpha = plain.getContext('2d').getImageData(0, 0, plain.width, plain.height).data;
+        let seeThrough = false;
+        for (let i = 3; i < alpha.length; i += 4) if (alpha[i] < 250) { seeThrough = true; break; }
+        const versions = [];
+        if (seeThrough) versions.push(await encode(plain, 'image/png'));
+        for (const [side, quality] of AVATAR_STEPS) versions.push(await encode(draw(side, '#ffffff'), 'image/jpeg', quality));
+        const out = [];
+        for (const blob of versions) if (blob) out.push(new Uint8Array(await blob.arrayBuffer()));
+        if (!out.length) throw new Error("The picture couldn't be prepared.");
+        return out;
+    } finally {
+        if (bitmap.close) bitmap.close();
+    }
+}
+
 // The picture lines in a chat message: { pictures: [{ cid, path, name }], rest: the text without them }.
 function channelPictures(text) {
     const pictures = [];
