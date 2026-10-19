@@ -619,6 +619,9 @@
             font-size: 0.95rem;
             border-right: 1px solid rgba(255,255,255,0.05);
         }
+        .input-prefix-group .prefix[hidden] { display: none; }
+        .nick-error { color: #f87171; }
+        .nick-error:empty { display: none; }
         .input-prefix-group input {
             flex: 1;
             background: transparent;
@@ -855,6 +858,22 @@
         }
         .ptt-btn.held { background: rgba(56, 189, 248, 0.2); border-color: #38bdf8; color: #38bdf8; }
         .ptt-btn.hidden { display: none; }
+        /* The floating push-to-talk button: a round button at the bottom right, above the message box */
+        .ptt-float {
+            position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: calc(96px + env(safe-area-inset-bottom));
+            width: 60px; height: 60px; border-radius: 50%; z-index: 50;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(30, 31, 34, 0.78); color: #dbdee1; border: 1px solid rgba(255,255,255,0.14);
+            box-shadow: 0 6px 18px rgba(0,0,0,0.45); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+            cursor: pointer; transition: transform 0.12s, background 0.12s, color 0.12s, box-shadow 0.12s;
+            user-select: none; -webkit-user-select: none; touch-action: none; -webkit-touch-callout: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .ptt-float.held {
+            background: rgba(14, 116, 144, 0.92); color: #e0f2fe; border-color: #38bdf8; transform: scale(1.1);
+            box-shadow: 0 0 0 6px rgba(56, 189, 248, 0.25), 0 6px 18px rgba(0,0,0,0.45);
+        }
+        .ptt-float.hidden { display: none; }
 
         .modal-footer {
             padding: 16px 20px;
@@ -1120,6 +1139,10 @@
 
             <!-- Push-to-talk: shown only in push-to-talk mode -->
             <button class="ptt-btn hidden" id="ptt-btn">Hold to talk</button>
+            <!-- The floating push-to-talk button (phones, Settings > General): stays on screen while you scroll -->
+            <button class="ptt-float hidden" id="ptt-float" aria-label="Hold to talk" title="Hold to talk">
+                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor" stroke="none"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+            </button>
 
             <div class="ts-widget">
                 <div class="ts-header">
@@ -1392,9 +1415,10 @@
                     <div class="settings-group">
                         <label>Nickname</label>
                         <div class="input-prefix-group">
-                            <span class="prefix">Web - </span>
+                            <span class="prefix" hidden></span>
                             <input type="text" id="setting-nick" placeholder="Alex">
                         </div>
+                        <p class="setting-desc nick-error" id="nick-error"></p>
                     </div>
                     <p class="setting-desc">Settings are saved for this browser on this device (another browser has its own).</p>
                     <div class="settings-group">
@@ -1406,6 +1430,10 @@
                         <p class="setting-desc">Use "Always through relay" in case automatic is not working.</p>
                     </div>
                     <p class="setting-desc" id="relay-info">Relay: …</p>
+                    <div class="settings-group hidden" id="floating-ptt-group">
+                        <label class="check-row"><input type="checkbox" id="setting-floating-ptt"> Floating push-to-talk button</label>
+                        <p class="setting-desc">In push-to-talk mode, a round button stays at the bottom of the screen, so you can talk while you scroll the chat.</p>
+                    </div>
                 </div>
 
                 <div class="settings-page hidden" data-page="playback">

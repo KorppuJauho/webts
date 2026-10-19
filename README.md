@@ -16,7 +16,8 @@ server: voice, chat, pictures and streams, on a PC or a phone, with nothing to i
 ## What it does
 
 - **Voice:** push-to-talk or voice activation, per-person volume, mute and sound mute in sync with the server, talk
-  power respected. Works in Chrome, Edge, Safari and Firefox (also Firefox on Android, through Opus in WebAssembly).
+  power respected; on phones an optional floating push-to-talk button. Works in Chrome, Edge, Safari and Firefox (also
+  Firefox on Android, through Opus in WebAssembly).
 - **The channel tree** as the TeamSpeak app shows it: the server's own icons, group badges, avatars, spacers and
   channel banners, in the server's order. Move between channels with a click.
 - **Chat:** channel and private chat, pokes, link previews, and optionally a chat history across days, locked on

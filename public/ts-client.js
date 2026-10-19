@@ -50,7 +50,8 @@ const DEFAULT_SETTINGS = {
     cameraQuality: '720',   // '480' (data saver) | '720'
     cameraSound: false,     // the camera stream carries what the microphone hears, all the time
     shareAudio: false,
-    videoConnection: 'auto' // 'auto' | 'relay': streams always through the relay (when the bridge has one)
+    videoConnection: 'auto', // 'auto' | 'relay': streams always through the relay (when the bridge has one)
+    floatingPtt: false      // phones: the floating push-to-talk button
 };
 const SHARE_RESOLUTIONS = ['720', '1080', '1440', '2160', 'source'];
 const ACTIVATIONS = ['vad', 'ptt', 'continuous'];
@@ -640,9 +641,14 @@ function keyLabel(code) {
 const pttBtn = document.getElementById('ptt-btn');
 // A touch-only device (a phone): no hover and a coarse pointer, so no keyboard to speak of.
 const touchOnly = !!(window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches);
+// The floating one (Settings > General, phones only): the same button, kept on screen while you scroll the chat.
+const pttFloat = document.getElementById('ptt-float');
+document.getElementById('floating-ptt-group').classList.toggle('hidden', !touchOnly);
 function showPttState() {
     pttBtn.classList.toggle('hidden', appSettings.activation !== 'ptt');
     pttBtn.classList.toggle('held', pttKeyHeld || pttButtonHeld);
+    pttFloat.classList.toggle('hidden', !(touchOnly && appSettings.floatingPtt && appSettings.activation === 'ptt'));
+    pttFloat.classList.toggle('held', pttKeyHeld || pttButtonHeld);
     pttBtn.title = `Hold to talk (or hold ${keyLabel(appSettings.pttKey)} while this page is active)`;
 }
 let capturingPttKey = false;
@@ -664,18 +670,20 @@ window.addEventListener('blur', () => {
     pttButtonHeld = false;
     showPttState();
 });
-pttBtn.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    try { pttBtn.setPointerCapture(e.pointerId); } catch (err) {}
-    pttButtonHeld = true;
-    showPttState();
-});
-['pointerup', 'pointercancel', 'lostpointercapture'].forEach((type) => pttBtn.addEventListener(type, () => {
-    if (!pttButtonHeld) return;
-    pttButtonHeld = false;
-    showPttState();
-}));
-pttBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+for (const button of [pttBtn, pttFloat]) {
+    button.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        try { button.setPointerCapture(e.pointerId); } catch (err) {}
+        pttButtonHeld = true;
+        showPttState();
+    });
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((type) => button.addEventListener(type, () => {
+        if (!pttButtonHeld) return;
+        pttButtonHeld = false;
+        showPttState();
+    }));
+    button.addEventListener('contextmenu', (e) => e.preventDefault());
+}
 
 // ============================================
 // UI EVENT LISTENERS
@@ -1280,6 +1288,8 @@ document.addEventListener('keydown', (e) => {
 
 function fillSettingsForm() {
     inputNick.value = appSettings.nick;
+    nickError.textContent = '';
+    document.getElementById('setting-floating-ptt').checked = appSettings.floatingPtt;
     inputInVol.value = gainToDb(appSettings.inVolume);
     inputOutVol.value = appSettings.outVolume;
     inputVad.value = appSettings.vadThreshold;
@@ -1340,7 +1350,27 @@ function applySettings(before) {
 }
 
 // Save & Apply
+// A nickname TeamSpeak takes: 3 to 30 characters with the prefix. Empty is fine: the name from the sign-in is used.
+let nickPrefix = 'Web - ';
+const nickError = document.getElementById('nick-error');
+function nicknameProblem(nick) {
+    if (!nick) return '';
+    const room = 30 - nickPrefix.length;
+    if ((nickPrefix + nick).length < 3) return `The nickname needs at least ${3 - nickPrefix.length} characters.`;
+    if (nick.length > room) return `The nickname can be at most ${room} characters.`;
+    return '';
+}
+inputNick.addEventListener('input', () => { nickError.textContent = ''; });
+
 saveSettingsBtn.addEventListener('click', () => {
+    // A nickname TeamSpeak would refuse: nothing is saved, and the reason shows under the box.
+    const problem = nicknameProblem(inputNick.value.trim());
+    if (problem) {
+        showSettingsTab('general');
+        nickError.textContent = problem;
+        inputNick.focus();
+        return;
+    }
     saveAvatar(); // a picked profile picture (before closeSettings drops it)
     const before = { ...appSettings };
 
@@ -1350,6 +1380,7 @@ saveSettingsBtn.addEventListener('click', () => {
     appSettings.vadThreshold = parseFloat(inputVad.value);
     appSettings.vadTailMs = Math.round(Number(inputTail.value) * 1000);
     appSettings.activation = selectedActivation();
+    appSettings.floatingPtt = document.getElementById('setting-floating-ptt').checked;
     appSettings.pttKey = pendingPttKey;
     appSettings.inputDeviceId = selectInput.value;
     if (canPickOutput) appSettings.outputDeviceId = selectOutput.value;
@@ -1436,6 +1467,14 @@ showPttState();
 // The bridge's settings that the page follows: sign-out and back links, and the picture limit.
 socket.on('webts-config', (cfg) => {
     if (!cfg) return;
+    // The nickname's prefix (NICK_PREFIX): shown in front of the nickname box; none when it's empty.
+    if (typeof cfg.nickPrefix === 'string') {
+        nickPrefix = cfg.nickPrefix;
+        inputNick.maxLength = Math.max(1, 30 - nickPrefix.length);
+        const prefix = document.querySelector('#settings-modal .input-prefix-group .prefix');
+        prefix.textContent = cfg.nickPrefix;
+        prefix.hidden = !cfg.nickPrefix;
+    }
     logoutUrl = typeof cfg.logoutUrl === 'string' ? cfg.logoutUrl : '';
     // style.display, not hidden: these elements have their own display styles, which would win over hidden.
     const show = (el, on) => {
