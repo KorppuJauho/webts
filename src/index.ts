@@ -849,7 +849,8 @@ io.on('connection', async (socket) => {
     // The nickname the page asks for (its settings), else the name from the sign-in.
     const requestedNick = typeof socket.handshake.query.nick === 'string' ? socket.handshake.query.nick.trim().slice(0, 30) : '';
     const namePart = requestedNick || person.name || 'Guest';
-    // TeamSpeak takes 3 to 30 characters: with an empty NICK_PREFIX a two-letter name gets a dot ("Al.").
+    // TeamSpeak takes 3 to 30 characters. Settings refuse a typed nickname outside that; only a too-short name from
+    // the sign-in (with an empty NICK_PREFIX) is padded with dots, as a last resort ("Al.").
     const botNickname = `${config.nickPrefix}${namePart.charAt(0).toUpperCase() + namePart.slice(1)}`.slice(0, 30).padEnd(3, '.');
 
     console.log(`[WebSocket] Client connected: ${email}. Preparing TS bot: ${botNickname}...`);

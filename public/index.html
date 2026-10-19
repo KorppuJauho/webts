@@ -620,6 +620,8 @@
             border-right: 1px solid rgba(255,255,255,0.05);
         }
         .input-prefix-group .prefix[hidden] { display: none; }
+        .nick-error { color: #f87171; }
+        .nick-error:empty { display: none; }
         .input-prefix-group input {
             flex: 1;
             background: transparent;
@@ -1416,6 +1418,7 @@
                             <span class="prefix" hidden></span>
                             <input type="text" id="setting-nick" placeholder="Alex">
                         </div>
+                        <p class="setting-desc nick-error" id="nick-error"></p>
                     </div>
                     <p class="setting-desc">Settings are saved for this browser on this device (another browser has its own).</p>
                     <div class="settings-group">

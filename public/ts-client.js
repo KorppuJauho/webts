@@ -1288,6 +1288,7 @@ document.addEventListener('keydown', (e) => {
 
 function fillSettingsForm() {
     inputNick.value = appSettings.nick;
+    nickError.textContent = '';
     document.getElementById('setting-floating-ptt').checked = appSettings.floatingPtt;
     inputInVol.value = gainToDb(appSettings.inVolume);
     inputOutVol.value = appSettings.outVolume;
@@ -1349,7 +1350,27 @@ function applySettings(before) {
 }
 
 // Save & Apply
+// A nickname TeamSpeak takes: 3 to 30 characters with the prefix. Empty is fine: the name from the sign-in is used.
+let nickPrefix = 'Web - ';
+const nickError = document.getElementById('nick-error');
+function nicknameProblem(nick) {
+    if (!nick) return '';
+    const room = 30 - nickPrefix.length;
+    if ((nickPrefix + nick).length < 3) return `The nickname needs at least ${3 - nickPrefix.length} characters.`;
+    if (nick.length > room) return `The nickname can be at most ${room} characters.`;
+    return '';
+}
+inputNick.addEventListener('input', () => { nickError.textContent = ''; });
+
 saveSettingsBtn.addEventListener('click', () => {
+    // A nickname TeamSpeak would refuse: nothing is saved, and the reason shows under the box.
+    const problem = nicknameProblem(inputNick.value.trim());
+    if (problem) {
+        showSettingsTab('general');
+        nickError.textContent = problem;
+        inputNick.focus();
+        return;
+    }
     saveAvatar(); // a picked profile picture (before closeSettings drops it)
     const before = { ...appSettings };
 
@@ -1448,6 +1469,8 @@ socket.on('webts-config', (cfg) => {
     if (!cfg) return;
     // The nickname's prefix (NICK_PREFIX): shown in front of the nickname box; none when it's empty.
     if (typeof cfg.nickPrefix === 'string') {
+        nickPrefix = cfg.nickPrefix;
+        inputNick.maxLength = Math.max(1, 30 - nickPrefix.length);
         const prefix = document.querySelector('#settings-modal .input-prefix-group .prefix');
         prefix.textContent = cfg.nickPrefix;
         prefix.hidden = !cfg.nickPrefix;
