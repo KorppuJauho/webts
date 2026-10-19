@@ -3,7 +3,7 @@
 What each release changes. Versions: **1.0.x** fixes, **1.x.0** features, **2.0.0** would be the first release that
 needs changes on your side (README: "Versions").
 
-## 1.1.0 (unreleased)
+## 1.1.0 (2026-10-19)
 
 - **Profile pictures:** Settings > General > Profile picture sets, changes or removes your TeamSpeak avatar, so the
   TeamSpeak app shows it too and it's the same on all your devices. Pictures are fitted inside 320×320 (their shape
