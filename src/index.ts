@@ -849,7 +849,8 @@ io.on('connection', async (socket) => {
     // The nickname the page asks for (its settings), else the name from the sign-in.
     const requestedNick = typeof socket.handshake.query.nick === 'string' ? socket.handshake.query.nick.trim().slice(0, 30) : '';
     const namePart = requestedNick || person.name || 'Guest';
-    const botNickname = `${config.nickPrefix}${namePart.charAt(0).toUpperCase() + namePart.slice(1)}`.slice(0, 30);
+    // TeamSpeak takes 3 to 30 characters: with an empty NICK_PREFIX a two-letter name gets a dot ("Al.").
+    const botNickname = `${config.nickPrefix}${namePart.charAt(0).toUpperCase() + namePart.slice(1)}`.slice(0, 30).padEnd(3, '.');
 
     console.log(`[WebSocket] Client connected: ${email}. Preparing TS bot: ${botNickname}...`);
     // The settings the page follows (its menu links and the picture limit).
@@ -858,6 +859,7 @@ io.on('connection', async (socket) => {
         backUrl: config.backUrl,
         backLabel: config.backLabel,
         picturesEnabled: config.picturesEnabled,
+        nickPrefix: config.nickPrefix,
         pictureMaxMb: config.pictureMaxMb,
         // The server list (only when there are several, or with "connect anywhere") and the one this connection is on.
         servers: SERVERS.length > 1 || ANY_SERVER ? SERVERS.map(publicServer) : [],

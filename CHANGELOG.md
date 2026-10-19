@@ -12,6 +12,10 @@ needs changes on your side (README: "Versions").
   removed).
 - **myTeamSpeak pictures:** people signed in to myTeamSpeak in the TeamSpeak app show their myTeamSpeak picture when
   they have no avatar on the server (fetched by WebTS, so viewers' browsers don't contact Google).
+- **Floating push-to-talk button (phones):** Settings > General > "Floating push-to-talk button". In push-to-talk
+  mode a round button stays at the bottom right, so you can talk while you scroll the chat.
+- **No nickname prefix:** `NICK_PREFIX=` (empty) now works all the way: Settings shows the real prefix (or none), and a
+  name shorter than TeamSpeak's 3 characters gets a dot instead of failing to connect.
 - **Fixed:** someone who changed their avatar kept showing the old one for up to 6 hours.
 
 ## 1.0.0 (2026-10-17)
