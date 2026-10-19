@@ -741,9 +741,9 @@
         .avatar-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
         .avatar-preview.pending { border-color: #3b82f6; }
         .avatar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-        .avatar-actions .save-btn { padding: 7px 12px; font-size: 0.85rem; }
         .avatar-actions .hidden { display: none; }
         #avatar-status.error { color: #f87171; }
+        #avatar-status:empty { display: none; }
         .server-picker-list { gap: 8px; }
         .server-choice {
             background: #1e1f22; color: #dbdee1; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
@@ -1382,11 +1382,10 @@
                                 <button class="secondary-btn" id="avatar-change">Change…</button>
                                 <button class="secondary-btn hidden" id="avatar-camera">Take a photo</button>
                                 <button class="secondary-btn hidden" id="avatar-remove">Remove</button>
-                                <button class="save-btn hidden" id="avatar-save">Save picture</button>
                                 <button class="secondary-btn hidden" id="avatar-cancel">Cancel</button>
                             </div>
                         </div>
-                        <p class="setting-desc" id="avatar-status">Everyone on the server sees it, also in the TeamSpeak app. It's kept on the server, so it's the same on all your devices.</p>
+                        <p class="setting-desc" id="avatar-status"></p>
                         <input type="file" id="avatar-file" accept="image/*" hidden>
                         <input type="file" id="avatar-camera-file" accept="image/*" capture="user" hidden>
                     </div>

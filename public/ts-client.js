@@ -1298,6 +1298,7 @@ function fillSettingsForm() {
 }
 
 function closeSettings() {
+    if (avatarPending) { dropPendingAvatar(); avatarSay(''); } // a picked picture not saved
     stopMicTest();
     capturingPttKey = false;
     setOutputDevice(appSettings.outputDeviceId); // back to the saved one if another was tried
@@ -1340,6 +1341,7 @@ function applySettings(before) {
 
 // Save & Apply
 saveSettingsBtn.addEventListener('click', () => {
+    saveAvatar(); // a picked profile picture (before closeSettings drops it)
     const before = { ...appSettings };
 
     appSettings.nick = inputNick.value.trim();
@@ -1812,19 +1814,18 @@ function syncMuteToTeamSpeak(state) {
 }
 
 // --- PROFILE PICTURE (Settings > General) ---
-// The picture is prepared here (chat-pictures.js: inside 320×320, no hidden details) and shown before saving; Save
-// sends it to the bridge, which makes it your TeamSpeak avatar. Over the server's size limit the bridge answers
-// "too big", and the next, smaller version goes. Remove clears it.
+// The picture is prepared here (chat-pictures.js: inside 320×320, no hidden details) and shown; Save & Apply sends it
+// to the bridge, which makes it your TeamSpeak avatar (closing Settings without saving drops it). Over the server's
+// size limit the bridge answers "too big", and the next, smaller version goes. Remove clears it at once.
 const avatarPreview = document.getElementById('avatar-preview');
 const avatarStatus = document.getElementById('avatar-status');
-const avatarButtons = Object.fromEntries(['change', 'camera', 'remove', 'save', 'cancel']
+const avatarButtons = Object.fromEntries(['change', 'camera', 'remove', 'cancel']
     .map((name) => [name, document.getElementById(`avatar-${name}`)]));
-const AVATAR_INFO = avatarStatus.textContent;
-let avatarPending = null; // { versions, url } while a picked picture waits for Save
+let avatarPending = null; // { versions, url } while a picked picture waits for Save & Apply
 let avatarBusy = false;
 
 function avatarSay(text, error = false) {
-    avatarStatus.textContent = text || AVATAR_INFO;
+    avatarStatus.textContent = text || '';
     avatarStatus.classList.toggle('error', !!error);
 }
 function showOwnAvatar() {
@@ -1838,10 +1839,8 @@ function showOwnAvatar() {
         avatarPreview.innerHTML = url ? `<img src="${escapeHtml(url)}" alt="" onerror="this.remove()">` : 'No picture';
     }
     avatarPreview.classList.toggle('pending', !!avatarPending);
-    show('change', !avatarPending);
-    show('camera', !avatarPending && window.matchMedia('(pointer: coarse)').matches);
+    show('camera', window.matchMedia('(pointer: coarse)').matches);
     show('remove', !avatarPending && !!(me && me.avatar));
-    show('save', !!avatarPending);
     show('cancel', !!avatarPending);
     for (const button of Object.values(avatarButtons)) button.disabled = avatarBusy || !connected;
 }
@@ -1856,7 +1855,7 @@ async function pickAvatar(file) {
     try {
         const versions = await avatarVersions(file);
         avatarPending = { versions, url: URL.createObjectURL(new Blob([versions[0]])) };
-        avatarSay('This is how others will see it. Save it to use it.');
+        avatarSay('This is how others will see it. Save & Apply saves it.');
     } catch (e) {
         avatarSay(e.message, true);
     }
@@ -1865,24 +1864,23 @@ async function pickAvatar(file) {
 const avatarAsk = (event, data) => new Promise((resolve) => {
     socket.timeout(30000).emit(event, data, (err, answer) => resolve(err ? { error: 'No answer from WebTS. Please try again.' } : answer || {}));
 });
+// Save & Apply: Settings closes at once, so the outcome shows in the banner.
 async function saveAvatar() {
-    if (!avatarPending || avatarBusy) return;
+    const pending = avatarPending;
+    if (!pending || avatarBusy) return;
+    avatarPending = null;
     avatarBusy = true;
-    avatarSay('Saving…');
-    showOwnAvatar();
+    avatarSay('');
     let answer = {};
-    for (const version of avatarPending.versions) {
+    for (const version of pending.versions) {
         answer = await avatarAsk('avatar-set', version.buffer.slice(version.byteOffset, version.byteOffset + version.byteLength));
         if (!answer.tooBig) break;
     }
     avatarBusy = false;
-    if (answer.ok) {
-        dropPendingAvatar();
-        avatarSay('Saved.');
-        setTimeout(() => { if (!avatarPending && avatarStatus.textContent === 'Saved.') avatarSay(''); }, 4000);
-    } else {
-        avatarSay(answer.tooBig ? "This server allows only a very small profile picture, or none." : answer.error || "The picture couldn't be saved.", true);
-    }
+    URL.revokeObjectURL(pending.url);
+    if (answer.ok) showBanner('Profile picture saved.', 'success', null, { tag: 'avatar', hideAfterMs: 4000 });
+    else showBanner(answer.tooBig ? "This server allows only a very small profile picture, or none."
+        : answer.error || "The profile picture couldn't be saved.", 'error', null, { tag: 'avatar', hideAfterMs: 10000 });
     showOwnAvatar();
 }
 async function removeAvatar() {
@@ -1896,7 +1894,6 @@ async function removeAvatar() {
 }
 avatarButtons.change.addEventListener('click', () => document.getElementById('avatar-file').click());
 avatarButtons.camera.addEventListener('click', () => document.getElementById('avatar-camera-file').click());
-avatarButtons.save.addEventListener('click', saveAvatar);
 avatarButtons.remove.addEventListener('click', removeAvatar);
 avatarButtons.cancel.addEventListener('click', () => { dropPendingAvatar(); avatarSay(''); showOwnAvatar(); });
 for (const id of ['avatar-file', 'avatar-camera-file']) {
