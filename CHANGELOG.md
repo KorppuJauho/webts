@@ -3,6 +3,12 @@
 What each release changes. Versions: **1.0.x** fixes, **1.x.0** features, **2.0.0** would be the first release that
 needs changes on your side (README: "Versions").
 
+## Unreleased
+
+- **Avatars in the channel tree:** a small round picture next to each name, as the TeamSpeak app shows it (the
+  avatar, else the myTeamSpeak picture, else a grey default figure), with a green ring while they talk. The person
+  menu (right-click, or tap on a phone) shows the picture bigger.
+
 ## 1.1.0 (2026-10-19)
 
 - **Profile pictures:** Settings > General > Profile picture sets, changes or removes your TeamSpeak avatar, so the

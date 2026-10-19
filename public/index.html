@@ -214,13 +214,25 @@
             margin-right: 6px;
         }
         .person-menu-avatar {
-            width: 32px;
-            height: 32px;
+            display: block;
+            width: 96px;
+            height: 96px;
             border-radius: 50%;
             object-fit: cover;
-            vertical-align: middle;
-            margin-right: 8px;
+            margin: 4px auto 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.4);
         }
+        .person-menu-name.with-avatar { text-align: center; }
+        /* The picture in the channel tree, as the TeamSpeak app shows it: the person's avatar (else their
+           myTeamSpeak picture) over a grey default figure, which stays for people without one */
+        .ts-user-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .tree-avatar {
+            flex: none; width: 24px; height: 24px; border-radius: 50%; overflow: hidden;
+            background: #3f4147 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='9' r='4.2' fill='%238e9297'/%3E%3Cpath d='M3.5 21.5a8.5 7 0 0 1 17 0z' fill='%238e9297'/%3E%3C/svg%3E") center / cover;
+            transition: box-shadow 0.15s;
+        }
+        .tree-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .ts-user.is-talking .tree-avatar { box-shadow: 0 0 0 2px #22c55e; }
 
         .ts-channel-icon {
             width: 18px;
