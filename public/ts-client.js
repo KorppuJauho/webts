@@ -2421,6 +2421,34 @@ function avatarUrl(person) {
     }
     return '';
 }
+// In the channel tree: the picture over the default figure; one that doesn't load just leaves the figure. The tree
+// is drawn anew at every change (someone talking...), so each picture is one element, moved into the new row:
+// a new element each time would blink while it loads.
+const treeAvatarImages = new Map(); // address -> <img>
+function treeAvatarHtml(person) {
+    const url = avatarUrl(person);
+    return `<span class="tree-avatar"${url ? ` data-url="${escapeHtml(url)}"` : ''}></span>`;
+}
+function fillTreeAvatar(row) {
+    const holder = row.querySelector('.tree-avatar[data-url]');
+    if (!holder) return;
+    const url = holder.dataset.url;
+    let img = treeAvatarImages.get(url);
+    if (!img) {
+        if (treeAvatarImages.size > 500) treeAvatarImages.clear();
+        img = new Image();
+        img.alt = '';
+        // Not there (or the connection wasn't up yet): the figure stays, and it's asked again a minute later at most.
+        img.onerror = () => {
+            img.remove();
+            img.dataset.failed = '1';
+            setTimeout(() => { if (treeAvatarImages.get(url) === img) treeAvatarImages.delete(url); }, 60000);
+        };
+        img.src = url;
+        treeAvatarImages.set(url, img);
+    }
+    if (!img.dataset.failed) holder.appendChild(img);
+}
 function avatarHtml(person, cls) {
     const url = avatarUrl(person);
     return url ? `<img class="${cls}" src="${escapeHtml(url)}" alt="" onerror="retryAvatar(this)">` : '';
@@ -2464,7 +2492,9 @@ function openPersonMenu(clid, x, y) {
     if (personMenuClid === clid && Date.now() - personMenuOpenedAt < 700) return;
     personMenuClid = clid;
     personMenuOpenedAt = Date.now();
-    document.getElementById('person-menu-name').innerHTML = avatarHtml(person, 'person-menu-avatar') + escapeHtml(person.nickname);
+    const menuName = document.getElementById('person-menu-name');
+    menuName.innerHTML = avatarHtml(person, 'person-menu-avatar') + escapeHtml(person.nickname);
+    menuName.classList.toggle('with-avatar', !!avatarUrl(person));
     personVol.value = personVolume(person.uid);
     showPersonVolume();
     personMenu.classList.remove('hidden');
@@ -2886,7 +2916,8 @@ function renderChannelTree() {
             // The id lets the talking glow find the row
             userDiv.id = `ts-user-${user.clid}`; 
             userDiv.className = userClass;
-            userDiv.innerHTML = `<span class="ts-username">${escapeHtml(user.nickname)}</span><div class="ts-badges">${badgesHTML}</div>`;
+            userDiv.innerHTML = `<span class="ts-user-main">${treeAvatarHtml(user)}<span class="ts-username">${escapeHtml(user.nickname)}</span></span><div class="ts-badges">${badgesHTML}</div>`;
+            fillTreeAvatar(userDiv);
             userListDiv.appendChild(userDiv);
         });
 
