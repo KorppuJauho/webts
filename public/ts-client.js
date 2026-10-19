@@ -49,6 +49,7 @@ const DEFAULT_SETTINGS = {
     cameraFacing: 'environment', // 'environment' (back) | 'user' (front)
     cameraQuality: '720',   // '480' (data saver) | '720'
     cameraSound: false,     // the camera stream carries what the microphone hears, all the time
+    cameraRotateLock: false, // the camera stream's turn is locked (false: it follows how the phone is held)
     shareAudio: false,
     videoConnection: 'auto', // 'auto' | 'relay': streams always through the relay (when the bridge has one)
     floatingPtt: false      // phones: the floating push-to-talk button
@@ -3612,6 +3613,7 @@ function showShareState() {
     shareBtn.classList.toggle('sharing', !!share);
     shareBar.classList.toggle('hidden', !share);
     shareFlipBtn.classList.toggle('hidden', !share || share.kind !== 'camera' || !share.canFlip);
+    showRotateButton();
     // The camera's preview: only on your own screen (no data), mirrored for the front camera like a selfie;
     // viewers get the true picture.
     const camera = !!share && share.kind === 'camera';
@@ -3827,6 +3829,7 @@ function cameraError(e) {
 // The camera, streamed like a share (TeamSpeak's stream type 1). Your voice goes to TeamSpeak as usual, so the
 // stream itself has no sound (a second copy of the microphone would echo).
 async function startCamera() {
+    askMotionPermission(); // iPhone: only from the tap itself, before anything is waited for
     const facing = selectCameraFacing.value === 'user' ? 'user' : 'environment';
     const quality = selectCameraQuality.value === '480' ? '480' : '720';
     const wantSound = checkCameraSound.checked;
@@ -3871,7 +3874,12 @@ async function startCamera() {
         }
     }).catch(() => {});
     keepScreenOn();
-    showCameraPreview(video);
+    share.sendTrack = video;
+    share.rotateLocked = appSettings.cameraRotateLock;
+    share.turn = 0;
+    followPhoneTurn(true);
+    updateCameraRotation();
+    showCameraPreview(share.sendTrack);
     showShareState();
     socket.emit('publish-start', { name: 'Camera', type: 1, bitrate: share.bitrate, audio: !!soundTrack });
 }
@@ -3900,6 +3908,178 @@ async function cameraSoundTrack() {
         return copy;
     }
 }
+
+// --- CAMERA ROTATION (phones) ---
+// With the phone's auto-rotate off, the screen stays upright however the phone is held, and so does the camera's
+// picture: filming sideways sent viewers a picture lying on its side. Rotate (the default) follows the phone's
+// motion sensor and turns the picture upright before it is sent: viewers and your preview get it upright, the page
+// stays as it is. When the screen turns with the phone, the browser has already turned the picture and nothing more
+// is done. Lock keeps the current turn (the phone lying on a table, or filming sideways on purpose). The turned
+// picture is drawn on a canvas only while a turn is needed; otherwise the camera goes out as it is.
+const shareRotateBtn = document.getElementById('share-rotate');
+const ROTATE_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M16.48 2.52c3.27 1.55 5.61 4.72 5.97 8.48h1.5C23.44 4.84 18.29 0 12 0l-.66.03 3.81 3.81 1.33-1.32zm-6.25-.77a1.49 1.49 0 0 0-2.12 0L1.75 8.11a1.49 1.49 0 0 0 0 2.12l12.02 12.02c.59.59 1.54.59 2.12 0l6.36-6.36c.59-.59.59-1.54 0-2.12L10.23 1.75zm4.6 19.44L2.81 9.17l6.36-6.36 12.02 12.02-6.36 6.36zm-7.31.29A10.49 10.49 0 0 1 1.55 13H.05C.56 19.16 5.71 24 12 24l.66-.03-3.81-3.81-1.33 1.32z"/></svg>';
+const LOCK_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M18 8h-1V6A5 5 0 0 0 7 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zM9 6a3 3 0 0 1 6 0v2H9V6zm3 11a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/></svg>';
+const onIos = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let phoneTurn = 0; // how the phone is held, clockwise from upright: 0, 90, 180 or 270 degrees
+let turnSeen = null;
+let turnSeenAt = 0;
+
+// iPhone asks once before a page may read the motion sensor; it has to be asked from a tap.
+function askMotionPermission() {
+    if (window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission === 'function') {
+        DeviceMotionEvent.requestPermission().catch(() => {});
+    }
+}
+// Gravity says which edge points down. Held still for 0.4 s before it counts; lying flat keeps the last turn.
+function onPhoneMotion(e) {
+    const g = e.accelerationIncludingGravity;
+    if (!g || g.x == null || g.y == null) return;
+    const x = onIos ? -g.x : g.x; // iPhone reports gravity the other way round
+    const y = onIos ? -g.y : g.y;
+    if (Math.hypot(x, y) < 4) return;
+    let turn = null;
+    if (Math.abs(y) > Math.abs(x) * 1.5) turn = y > 0 ? 0 : 180;
+    else if (Math.abs(x) > Math.abs(y) * 1.5) turn = x < 0 ? 90 : 270;
+    if (turn === null || turn === phoneTurn) { turnSeen = null; return; }
+    const now = performance.now();
+    if (turnSeen !== turn) { turnSeen = turn; turnSeenAt = now; return; }
+    if (now - turnSeenAt < 400) return;
+    phoneTurn = turn;
+    turnSeen = null;
+    updateCameraRotation();
+}
+function followPhoneTurn(on) {
+    window.removeEventListener('devicemotion', onPhoneMotion);
+    if (on) window.addEventListener('devicemotion', onPhoneMotion);
+}
+if (screen.orientation && screen.orientation.addEventListener) {
+    screen.orientation.addEventListener('change', () => updateCameraRotation());
+}
+// How far the screen itself has turned, clockwise (the screen's own angle counts the other way).
+function screenTurn() {
+    const a = screen.orientation && typeof screen.orientation.angle === 'number' ? screen.orientation.angle
+        : typeof window.orientation === 'number' ? window.orientation : 0;
+    return (360 - ((a % 360) + 360) % 360) % 360;
+}
+// The turn the picture needs: the phone's own, less what the screen (and so the browser) already turned. The
+// front camera sees the world mirrored, so it turns the other way.
+function neededTurn(cam) {
+    let turn = (phoneTurn - screenTurn() + 360) % 360;
+    if (cam.facing === 'user') turn = (360 - turn) % 360;
+    return turn;
+}
+
+function makeRotator(cam) {
+    if (cam.rotator) return cam.rotator;
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute('playsinline', '');
+    video.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+    document.body.appendChild(video);
+    const canvas = document.createElement('canvas');
+    canvas.width = 2;
+    canvas.height = 2;
+    const track = canvas.captureStream(30).getVideoTracks()[0];
+    track.contentHint = 'motion';
+    cam.rotator = { video, canvas, ctx: canvas.getContext('2d'), track, running: false, timer: null };
+    return cam.rotator;
+}
+function drawTurned(cam) {
+    const r = cam.rotator;
+    const v = r.video;
+    if (!v.videoWidth) return;
+    const sideways = cam.turn % 180 !== 0;
+    const w = sideways ? v.videoHeight : v.videoWidth;
+    const h = sideways ? v.videoWidth : v.videoHeight;
+    if (r.canvas.width !== w || r.canvas.height !== h) { r.canvas.width = w; r.canvas.height = h; }
+    r.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    r.ctx.translate(w / 2, h / 2);
+    r.ctx.rotate(cam.turn * Math.PI / 180);
+    r.ctx.drawImage(v, -v.videoWidth / 2, -v.videoHeight / 2);
+}
+function runRotator(cam, camTrack) {
+    const r = makeRotator(cam);
+    const source = r.video.srcObject && r.video.srcObject.getVideoTracks()[0];
+    if (source !== camTrack) {
+        r.video.srcObject = new MediaStream([camTrack]);
+        r.video.play().catch(() => {});
+    }
+    if (r.running) return;
+    r.running = true;
+    // A plain timer, 30 times a second: the "next video frame" callback stalls for a video that isn't on screen.
+    const step = () => {
+        if (!r.running) return;
+        drawTurned(cam);
+        r.timer = setTimeout(step, 33);
+    };
+    step();
+}
+function pauseRotator(cam) {
+    if (!cam.rotator) return;
+    cam.rotator.running = false;
+    clearTimeout(cam.rotator.timer);
+}
+function stopRotator(cam) {
+    if (!cam.rotator) return;
+    pauseRotator(cam);
+    cam.rotator.track.stop();
+    cam.rotator.video.srcObject = null;
+    cam.rotator.video.remove();
+    cam.rotator = null;
+}
+
+// Sends the camera's own picture or the turned one, whichever is needed now: every viewer gets it on the same
+// connection (no new offer), and the preview shows what they see.
+let rotationUpdating = Promise.resolve();
+function updateCameraRotation() {
+    rotationUpdating = rotationUpdating.then(applyCameraRotation, applyCameraRotation);
+    return rotationUpdating;
+}
+async function applyCameraRotation() {
+    const cam = share;
+    if (!cam || cam.kind !== 'camera') return;
+    const camTrack = cam.stream.getVideoTracks()[0];
+    if (!camTrack) return;
+    if (!cam.rotateLocked) cam.turn = neededTurn(cam);
+    let want = camTrack;
+    if (cam.turn) {
+        runRotator(cam, camTrack);
+        want = cam.rotator.track;
+    } else {
+        pauseRotator(cam);
+    }
+    if (cam.sendTrack === want) return;
+    const old = cam.sendTrack;
+    cam.sendTrack = want;
+    for (const viewer of cam.viewers.values()) {
+        for (const sender of viewer.pc.getSenders()) {
+            if (sender.track === old) await sender.replaceTrack(want).catch((e) => console.warn('[Share] Turn not applied:', e.message));
+        }
+        applyShareParameters(viewer.pc);
+    }
+    if (share === cam) showCameraPreview(want);
+    streamDiagnostics('share', `camera turned ${cam.turn} degrees (phone ${phoneTurn}, screen ${screenTurn()}${cam.rotateLocked ? ', locked' : ''})`);
+}
+
+// The button (phones, while streaming the camera): rotate (follows the phone) or locked (keeps the current turn).
+function showRotateButton() {
+    const on = !!share && share.kind === 'camera' && touchOnly;
+    shareRotateBtn.classList.toggle('hidden', !on);
+    if (!on) return;
+    shareRotateBtn.classList.toggle('locked', !!share.rotateLocked);
+    shareRotateBtn.innerHTML = share.rotateLocked ? LOCK_ICON : ROTATE_ICON;
+    shareRotateBtn.title = share.rotateLocked ? 'Rotation locked (tap to follow the phone)' : 'Rotation follows the phone (tap to lock)';
+}
+shareRotateBtn.addEventListener('click', () => {
+    if (!share || share.kind !== 'camera') return;
+    askMotionPermission();
+    share.rotateLocked = !share.rotateLocked;
+    appSettings.cameraRotateLock = share.rotateLocked;
+    storeSettings();
+    showRotateButton();
+    updateCameraRotation();
+});
 
 // Back <-> front while streaming: the old camera is closed first (a phone can't open both), then every viewer
 // gets the new picture on the same connection (no new offer, so nobody drops).
@@ -3936,6 +4116,7 @@ async function flipCamera() {
     current.stream.removeTrack(oldTrack);
     current.stream.addTrack(newTrack);
     current.scale = shareScale();
+    if (current.sendTrack === oldTrack) current.sendTrack = newTrack;
     for (const viewer of current.viewers.values()) {
         for (const sender of viewer.pc.getSenders()) {
             if (sender.track === oldTrack) {
@@ -3946,7 +4127,8 @@ async function flipCamera() {
     }
     appSettings.cameraFacing = current.facing;
     storeSettings();
-    showCameraPreview(newTrack);
+    await updateCameraRotation(); // the front camera turns the other way; the turned picture now draws the new camera
+    showCameraPreview(current.sendTrack || newTrack);
     showShareState();
     const s = newTrack.getSettings();
     streamDiagnostics('share', `camera switched to ${current.facing} ${s.width}x${s.height}`);
@@ -4042,6 +4224,7 @@ function stopShare(fromServer) {
     clearInterval(ended.timer);
     ended.viewers.forEach((viewer) => viewer.pc.close());
     ended.stream.getTracks().forEach((t) => t.stop());
+    if (ended.kind === 'camera') { stopRotator(ended); followPhoneTurn(false); }
     if (ended.kind === 'camera') letScreenSleep();
     if (!fromServer && socket.connected) socket.emit('publish-stop');
     showShareState();
@@ -4084,7 +4267,8 @@ socket.on('publish-viewer', async (data) => {
     // so they wait in outgoing until the offer (or a reconnect offer) has gone.
     const viewer = { pc, pending: [], answered: false, offerSent: false, outgoing: [] };
     share.viewers.set(clid, viewer);
-    for (const track of share.stream.getTracks()) {
+    for (const own of share.stream.getTracks()) {
+        const track = own.kind === 'video' && share.sendTrack ? share.sendTrack : own; // a camera turned upright
         const transceiver = pc.addTransceiver(track, { direction: 'sendonly', streams: [share.stream] });
         if (track.kind === 'video' && share.codecs && transceiver.setCodecPreferences) {
             try { transceiver.setCodecPreferences(share.codecs); } catch (e) { console.warn('[Share] Codec order not applied:', e.message); }

@@ -856,6 +856,7 @@
         }
         .share-icon-btn:hover { background: #383a40; color: #fff; }
         .share-icon-btn:disabled { opacity: 0.5; cursor: default; }
+        .share-icon-btn.locked { color: #fbbf24; }
         .share-stop-btn {
             height: 40px; padding: 0 18px; border-radius: 20px; cursor: pointer; font-weight: 600; font-size: 0.85rem;
             background: rgba(218, 55, 60, 0.15); color: #f87171; border: 1px solid #da373c; transition: background 0.2s ease;
@@ -1155,6 +1156,7 @@
                 <span class="share-status" id="share-status">Sharing</span>
                 <span class="share-bar-buttons">
                     <button class="share-icon-btn hidden" id="share-flip" title="Switch camera" aria-label="Switch camera"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M16 7h-1l-1-1h-4L9 7H8c-1.1 0-2 .9-2 2v6c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V9c0-1.1-.9-2-2-2zm-4 7c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/><path d="M8.57.51l4.48 4.48V2.04c4.72.47 8.48 4.23 8.95 8.95h2C23.34 3.02 15.49-1.59 8.57.51zm2.38 21.45c-4.72-.47-8.48-4.23-8.95-8.95H0c.66 7.97 8.51 12.58 15.43 10.48l-4.48-4.48v2.95z"/></svg></button>
+                    <button class="share-icon-btn hidden" id="share-rotate" aria-label="Rotation"></button>
                     <button class="share-stop-btn" id="share-stop">Stop</button>
                 </span>
             </div>
