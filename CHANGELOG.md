@@ -3,7 +3,7 @@
 What each release changes. Versions: **1.0.x** fixes, **1.x.0** features, **2.0.0** would be the first release that
 needs changes on your side (README: "Versions").
 
-## Unreleased
+## 1.2.1 (2026-11-02)
 
 - **Fixed:** the page and the UI sounds are read once at start-up and served from memory, so a flood of requests can't
   turn into a flood of disk reads. Sounds copied into `sounds/` later are picked up at the next restart (the log says
