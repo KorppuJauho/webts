@@ -3,6 +3,11 @@
 What each release changes. Versions: **1.0.x** fixes, **1.x.0** features, **2.0.0** would be the first release that
 needs changes on your side (README: "Versions").
 
+## Unreleased
+
+- **Fixed:** two of the bridge's web server libraries updated for security fixes (body-parser 1.20.9: a request
+  with extra bytes after a compressed body could make it hang; qs 6.16.2).
+
 ## 1.2.0 (2026-10-20)
 
 - **Avatars in the channel tree:** a small round picture next to each name, as the TeamSpeak app shows it (the
