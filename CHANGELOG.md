@@ -5,6 +5,10 @@ needs changes on your side (README: "Versions").
 
 ## Unreleased
 
+- **Fixed:** the page and the UI sounds are read once at start-up and served from memory, so a flood of requests can't
+  turn into a flood of disk reads. Sounds copied into `sounds/` later are picked up at the next restart (the log says
+  how many were found).
+- The "Remember the password" box now says the password is kept on this device, so it's only for your own device.
 - **Fixed:** two of the bridge's web server libraries updated for security fixes (body-parser 1.20.9: a request
   with extra bytes after a compressed body could make it hang; qs 6.16.2).
 

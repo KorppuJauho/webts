@@ -140,6 +140,10 @@ app.get('/healthz', (req, res) => {
     res.set('Cache-Control', 'no-store').type('text/plain').send('ok');
 });
 
+// The page is read once at start-up and served from memory, so a request never touches the disk (a flood of page
+// loads can't turn into a flood of file reads). An update brings a new image, which starts WebTS again.
+const INDEX_HTML = await fs.readFile(path.join(PUBLIC_DIR, 'index.html'));
+
 app.get(['/', '/index.html'], async (req, res) => {
     access.ensurePublicCookie(req, res);
     if (access.mode !== 'public' && !(await access.identify(req))) {
@@ -147,7 +151,7 @@ app.get(['/', '/index.html'], async (req, res) => {
         return;
     }
     res.set({ 'Content-Security-Policy': PAGE_CSP, 'Cache-Control': 'no-store', 'X-Frame-Options': 'SAMEORIGIN' });
-    res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+    res.type('html').send(INDEX_HTML);
 });
 // The servers to choose from, for the page's list before it connects: ids and names only; and whether any address may
 // be typed.
@@ -195,14 +199,21 @@ const SOUND_FILES = new Set([
     'neutral_banned_server_currentchannel'
 ].map((name) => `${name}.wav`));
 
+// The sounds there are read once at start-up (together under 1 MB) and served from memory, like the page. Sounds
+// added later are picked up when WebTS starts again.
+const SOUNDS = new Map<string, Buffer>();
+for (const name of SOUND_FILES) {
+    try { SOUNDS.set(name, await fs.readFile(path.join(SOUNDS_DIR, name))); } catch (e) { /* not copied: that sound stays quiet */ }
+}
+console.log(SOUNDS.size ? `[Sounds] ${SOUNDS.size} of ${SOUND_FILES.size} loaded` : '[Sounds] none (the page is quiet; README: "Sounds")');
+
 app.get('/sounds/:name', async (req, res) => {
     const name = req.params.name;
     if (!SOUND_FILES.has(name)) return res.status(404).end();
     if (!(await access.identify(req))) return res.status(403).end();
-    res.set('Cache-Control', 'private, max-age=86400');
-    res.sendFile(path.join(SOUNDS_DIR, name), (sendErr) => {
-        if (sendErr && !res.headersSent) res.status(404).end();
-    });
+    const sound = SOUNDS.get(name);
+    if (!sound) return res.status(404).end();
+    res.set('Cache-Control', 'private, max-age=86400').type('audio/wav').send(sound);
 });
 
 // The voice connection only from the page's own address (a page elsewhere can't use a visitor's sign-in here).

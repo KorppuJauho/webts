@@ -130,8 +130,8 @@ That fixes WebTS only; the TeamSpeak apps still need the same number.
 ## Sounds
 
 TeamSpeak's own UI sounds are copyrighted and not included. To have them, copy the `.wav` files from your own
-TeamSpeak 3 client's `sound/default` folder into `sounds/` (mounted read-only into the container). Without them
-WebTS is simply quiet.
+TeamSpeak 3 client's `sound/default` folder into `sounds/` (mounted read-only into the container), then restart
+WebTS: it reads them once at start-up (the log says how many it found). Without them WebTS is simply quiet.
 
 ## Relay (optional)
 
